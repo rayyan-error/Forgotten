@@ -31,6 +31,16 @@ function pointToSegmentDistSq(p, a, b) {
 class ProceduralSFX {
   constructor() {
     this.ctx = null;
+    this.volume = 0.8;
+    this.muted = false;
+  }
+
+  setVolume(vol) {
+    this.volume = THREE.MathUtils.clamp(vol, 0, 1);
+  }
+
+  setMuted(muted) {
+    this.muted = Boolean(muted);
   }
 
   _ensureContext() {
@@ -51,9 +61,11 @@ class ProceduralSFX {
   }
 
   play(type) {
+    if (this.muted || this.volume <= 0.001) return;
     const ctx = this._ensureContext();
     if (!ctx || ctx.state !== 'running') return;
 
+    const vol = this.volume;
     const now = ctx.currentTime;
     try {
       if (type === 'swingLight' || type === 'swingHeavy') {
@@ -71,8 +83,8 @@ class ProceduralSFX {
         filter.frequency.setValueAtTime(type === 'swingHeavy' ? 320 : 520, now);
         filter.frequency.exponentialRampToValueAtTime(160, now + dur);
         const gain = ctx.createGain();
-        gain.gain.setValueAtTime(type === 'swingHeavy' ? 0.16 : 0.1, now);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+        gain.gain.setValueAtTime((type === 'swingHeavy' ? 0.16 : 0.1) * vol, now);
+        gain.gain.exponentialRampToValueAtTime(0.0005, now + dur);
         src.connect(filter).connect(gain).connect(ctx.destination);
         src.start(now);
       } else if (type === 'blockClang' || type === 'guardBreak') {
@@ -84,23 +96,34 @@ class ProceduralSFX {
           osc.frequency.setValueAtTime(f, now);
           osc.frequency.exponentialRampToValueAtTime(f * 0.72, now + dur);
           const gain = ctx.createGain();
-          gain.gain.setValueAtTime(0.11 / (idx + 1), now);
-          gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+          gain.gain.setValueAtTime((0.11 / (idx + 1)) * vol, now);
+          gain.gain.exponentialRampToValueAtTime(0.0005, now + dur);
           osc.connect(gain).connect(ctx.destination);
           osc.start(now);
           osc.stop(now + dur);
         });
-      } else if (type === 'hitLight' || type === 'hitHeavy' || type === 'playerHit') {
+      } else if (type === 'hitLight' || type === 'hitHeavy' || type === 'playerHit' || type === 'webHit') {
         const osc = ctx.createOscillator();
-        osc.type = 'sawtooth';
-        osc.frequency.setValueAtTime(type === 'hitHeavy' ? 145 : 185, now);
+        osc.type = type === 'webHit' ? 'triangle' : 'sawtooth';
+        osc.frequency.setValueAtTime(type === 'hitHeavy' ? 145 : type === 'webHit' ? 280 : 185, now);
         osc.frequency.exponentialRampToValueAtTime(42, now + 0.14);
         const gain = ctx.createGain();
-        gain.gain.setValueAtTime(type === 'hitHeavy' ? 0.18 : 0.12, now);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+        gain.gain.setValueAtTime((type === 'hitHeavy' ? 0.18 : 0.12) * vol, now);
+        gain.gain.exponentialRampToValueAtTime(0.0005, now + 0.15);
         osc.connect(gain).connect(ctx.destination);
         osc.start(now);
         osc.stop(now + 0.15);
+      } else if (type === 'webSpit') {
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(640, now);
+        osc.frequency.exponentialRampToValueAtTime(220, now + 0.16);
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(0.09 * vol, now);
+        gain.gain.exponentialRampToValueAtTime(0.0005, now + 0.17);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.17);
       } else if (type === 'heal' || type === 'grace') {
         const notes = type === 'grace' ? [330, 440, 660] : [520, 780];
         notes.forEach((freq, i) => {
@@ -108,8 +131,8 @@ class ProceduralSFX {
           osc.type = 'sine';
           osc.frequency.setValueAtTime(freq, now + i * 0.06);
           const gain = ctx.createGain();
-          gain.gain.setValueAtTime(0.07, now + i * 0.06);
-          gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.06 + 0.42);
+          gain.gain.setValueAtTime(0.07 * vol, now + i * 0.06);
+          gain.gain.exponentialRampToValueAtTime(0.0005, now + i * 0.06 + 0.42);
           osc.connect(gain).connect(ctx.destination);
           osc.start(now + i * 0.06);
           osc.stop(now + i * 0.06 + 0.45);
@@ -121,8 +144,8 @@ class ProceduralSFX {
           osc.frequency.setValueAtTime(freq, now);
           osc.frequency.exponentialRampToValueAtTime(freq * 0.78, now + 1.2);
           const gain = ctx.createGain();
-          gain.gain.setValueAtTime(0.14, now);
-          gain.gain.exponentialRampToValueAtTime(0.001, now + 1.25);
+          gain.gain.setValueAtTime(0.14 * vol, now);
+          gain.gain.exponentialRampToValueAtTime(0.0005, now + 1.25);
           osc.connect(gain).connect(ctx.destination);
           osc.start(now);
           osc.stop(now + 1.3);
@@ -160,6 +183,66 @@ export class CombatSystem {
     this._trailMesh = this._createRibbonMesh(this._maxTrailSamples);
 
     this._enemyTrailStates = new Map();
+
+    // Active ranged projectiles (e.g., Giant Frost Spider web spit)
+    this.projectiles = [];
+    this._projectileGroup = new THREE.Group();
+    this.scene.add(this._projectileGroup);
+    this._webCoreGeo = new THREE.IcosahedronGeometry(0.18, 0);
+    this._webShellGeo = new THREE.OctahedronGeometry(0.28, 0);
+  }
+
+  setVolume(vol) {
+    this.sfx.setVolume(vol);
+  }
+
+  setMuted(muted) {
+    this.sfx.setMuted(muted);
+  }
+
+  /**
+   * Spawns a ranged Frost-Web Spit projectile from a Giant Frost Spider toward the player.
+   */
+  spawnWebProjectile(originPos, targetPos, sourceEnemy = null) {
+    const dir = targetPos.clone().sub(originPos);
+    const len = dir.length() || 1;
+    dir.divideScalar(len);
+
+    const group = new THREE.Group();
+    group.position.copy(originPos);
+
+    const coreMat = new THREE.MeshBasicMaterial({
+      color: 0xd8fbff,
+      transparent: true,
+      opacity: 0.92,
+    });
+    const shellMat = new THREE.MeshBasicMaterial({
+      color: 0x6ae4ff,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.75,
+    });
+
+    group.add(new THREE.Mesh(this._webCoreGeo, coreMat));
+    group.add(new THREE.Mesh(this._webShellGeo, shellMat));
+    this._projectileGroup.add(group);
+
+    this.projectiles.push({
+      mesh: group,
+      coreMat,
+      shellMat,
+      pos: originPos.clone(),
+      vel: dir.multiplyScalar(14.5),
+      radius: 0.34,
+      damage: 14,
+      staminaDamage: 15,
+      slowDuration: 3.2,
+      age: 0,
+      maxLife: 2.6,
+      sourceEnemy,
+    });
+
+    this.sfx.play('webSpit');
   }
 
   _createRibbonMesh(maxSamples) {
@@ -253,6 +336,12 @@ export class CombatSystem {
         gravity = 6.5;
         life = 0.4 + Math.random() * 0.2;
         scale = 1.1 + Math.random() * 0.8;
+      } else if (kind === 'webBurst') {
+        color = i % 2 === 0 ? 0xcff8ff : 0x67d8ff;
+        speed = 2.8 + Math.random() * 3.2;
+        gravity = 5.0;
+        life = 0.38 + Math.random() * 0.22;
+        scale = 0.9 + Math.random() * 0.7;
       }
 
       const mat = new THREE.MeshBasicMaterial({
@@ -429,7 +518,7 @@ export class CombatSystem {
   /**
    * Evaluates player & enemy weapon hitboxes, shield blocks, i-frames, and world dummy hits.
    */
-  resolveHits(player, enemyManager, world, cameraController) {
+  resolveHits(player, enemyManager, world, cameraController, dt = 0.016) {
     // 1. Player Attack Hitbox vs. Enemies & Practice Dummy
     const playerAtk = player.getActiveAttack();
     if (playerAtk) {
@@ -441,8 +530,8 @@ export class CombatSystem {
         const hitRadius = enemy.collisionRadius + (playerAtk.isHeavy ? 0.48 : 0.36);
         const hitRadiusSq = hitRadius * hitRadius;
 
-        // Check vertical capsule points along enemy body against sword segment
-        const bodyHeights = [0.5, 1.0, 1.5, 1.9];
+        // Check vertical capsule points along enemy body (including low wolf/spider heights)
+        const bodyHeights = [0.35, 0.7, 1.05, 1.5, 1.9];
         let didHit = false;
         const samplePt = new THREE.Vector3();
         for (let h = 0; h < bodyHeights.length; h++) {
@@ -593,6 +682,90 @@ export class CombatSystem {
         this.sfx.play('playerHit');
       }
     }
+
+    // 3. Enemy Ranged Projectiles (Giant Frost Spider Web Spit) vs. Player
+    for (let i = this.projectiles.length - 1; i >= 0; i--) {
+      const proj = this.projectiles[i];
+      proj.age += dt;
+      proj.pos.addScaledVector(proj.vel, dt);
+      proj.mesh.position.copy(proj.pos);
+      proj.mesh.rotation.x += dt * 8;
+      proj.mesh.rotation.y += dt * 11;
+
+      const groundY = world.getTerrainHeight
+        ? world.getTerrainHeight(proj.pos.x, proj.pos.z)
+        : world.getGroundHeight(proj.pos.x, proj.pos.z);
+
+      if (proj.age >= proj.maxLife || proj.pos.y <= groundY + 0.08) {
+        if (proj.pos.y <= groundY + 0.08) {
+          this.spawnBurst(proj.pos, new THREE.Vector3(0, 1, 0), 8, 'webBurst');
+        }
+        this._removeProjectileAt(i);
+        continue;
+      }
+
+      const dx = proj.pos.x - player.position.x;
+      const dz = proj.pos.z - player.position.z;
+      const dy = proj.pos.y - (player.position.y + 0.95);
+      const hitDist = player.collisionRadius + proj.radius;
+
+      if (dx * dx + dz * dz <= hitDist * hitDist && Math.abs(dy) <= 1.05) {
+        // Priority 1: Dodge i-frames evade projectile completely
+        if (player.isInvulnerable) {
+          continue;
+        }
+
+        const toSourceX = -proj.vel.x;
+        const toSourceZ = -proj.vel.z;
+        const hLen = Math.hypot(toSourceX, toSourceZ) || 1;
+        const dirToSourceX = toSourceX / hLen;
+        const dirToSourceZ = toSourceZ / hLen;
+        const kbDir = new THREE.Vector3(-dirToSourceX, 0, -dirToSourceZ);
+        const facingDot = playerForwardX * dirToSourceX + playerForwardZ * dirToSourceZ;
+
+        // Priority 2: Frontal Shield Block absorbs projectile & prevents web slow
+        if (player.isBlocking && facingDot >= SHIELD_BLOCK_MIN_DOT) {
+          const shieldPos = player.getShieldWorldPos();
+          this.spawnBurst(shieldPos, new THREE.Vector3(dirToSourceX, 0.4, dirToSourceZ), 12, 'webBurst');
+          const guardBroken = player.consumeBlockStamina(proj.staminaDamage, kbDir, 2.2);
+          this.triggerHitStop(guardBroken ? 0.048 : 0.024);
+          cameraController.addTrauma(guardBroken ? 0.42 : 0.2);
+          if (cameraController.addKnockbackImpulse) {
+            cameraController.addKnockbackImpulse(kbDir, guardBroken ? 0.3 : 0.16);
+          }
+          this.sfx.play(guardBroken ? 'guardBreak' : 'blockClang');
+          this._removeProjectileAt(i);
+          continue;
+        }
+
+        // Priority 3: Unblocked & Undodged -> HP damage + Web Slow debuff!
+        player.stats.hp = Math.max(0, player.stats.hp - proj.damage);
+        if (player.applyWebSlow) {
+          player.applyWebSlow(proj.slowDuration);
+        }
+        this.spawnBurst(player.getWorldCenter(), kbDir, 14, 'webBurst');
+        this.triggerHitStop(0.03);
+        cameraController.addTrauma(0.28);
+
+        if (player.stats.hp <= 0) {
+          player.triggerDeath();
+          this.sfx.play('death');
+        } else {
+          player.triggerHitStagger(kbDir, 2.6);
+          this.sfx.play('webHit');
+        }
+        this._removeProjectileAt(i);
+      }
+    }
+  }
+
+  _removeProjectileAt(index) {
+    const proj = this.projectiles[index];
+    if (!proj) return;
+    this._projectileGroup.remove(proj.mesh);
+    proj.coreMat.dispose();
+    proj.shellMat.dispose();
+    this.projectiles.splice(index, 1);
   }
 
   /**

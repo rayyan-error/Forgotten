@@ -22,6 +22,7 @@ export class InputManager {
 
     this.isPointerLocked = false;
     this.isDragging = false;
+    this.uiBlocked = false;
     this.lastPointerX = 0;
     this.lastPointerY = 0;
 
@@ -52,6 +53,10 @@ export class InputManager {
         if (e.code === 'KeyE') this.pendingActionPresses.add('heal');
         if (e.code === 'KeyF') this.pendingActionPresses.add('interact');
         if (e.code === 'KeyR') this.pendingActionPresses.add('heavyAttack');
+        if (e.code === 'Escape') {
+          this._lastEscapeTime = performance.now();
+          this.pendingActionPresses.add('toggleSettings');
+        }
       }
       this.keysDown.add(e.code);
     };
@@ -61,6 +66,14 @@ export class InputManager {
     };
 
     this._boundHandlers.onMouseDown = (e) => {
+      if (this.uiBlocked) return;
+      if (
+        e.target &&
+        typeof e.target.closest === 'function' &&
+        e.target.closest('#settings-modal, #settings-toggle-btn')
+      ) {
+        return;
+      }
       const container = this.canvas.parentElement;
       const inViewport =
         e.target === this.canvas || (container && container.contains(e.target));
@@ -141,10 +154,18 @@ export class InputManager {
     };
 
     this._boundHandlers.onPointerLockChange = () => {
+      const wasLocked = this.isPointerLocked;
       this.isPointerLocked = document.pointerLockElement === this.canvas;
       if (this.isPointerLocked) {
         this.isDragging = false;
+        this._programmaticUnlock = false;
+      } else if (wasLocked && !this._programmaticUnlock && !this.uiBlocked) {
+        if (performance.now() - (this._lastEscapeTime || 0) > 120) {
+          this._lastEscapeTime = performance.now();
+          this.pendingActionPresses.add('toggleSettings');
+        }
       }
+      this._programmaticUnlock = false;
     };
 
     this._boundHandlers.onContextMenu = (e) => {
@@ -172,6 +193,7 @@ export class InputManager {
   }
 
   _requestPointerLock() {
+    if (this.uiBlocked) return;
     try {
       const promise = this.canvas.requestPointerLock?.();
       if (promise && typeof promise.catch === 'function') {
@@ -182,6 +204,29 @@ export class InputManager {
     } catch {
       // Ignore pointer lock rejection in restricted contexts
     }
+  }
+
+  releasePointerLock() {
+    this._programmaticUnlock = true;
+    try {
+      if (document.pointerLockElement === this.canvas) {
+        document.exitPointerLock?.();
+      }
+    } catch {
+      // Ignore exitPointerLock errors
+    }
+    this.isPointerLocked = false;
+    this.isDragging = false;
+  }
+
+  clearActiveInputs() {
+    this.keysDown.clear();
+    this.mouseButtonsDown.clear();
+    this.pendingMouseDeltaX = 0;
+    this.pendingMouseDeltaY = 0;
+    this.mouseDeltaX = 0;
+    this.mouseDeltaY = 0;
+    this.isDragging = false;
   }
 
   beginFrame() {

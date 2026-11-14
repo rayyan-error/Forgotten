@@ -8,8 +8,9 @@ import { EnemyManager } from './enemies.js';
 import { CombatSystem } from './combat.js';
 
 /**
- * Forgotten — Action RPG Entrypoint (Chunk 2: Melee Combat, Shield Blocking & Enemy AI)
- * Orchestrates renderer, modular subsystems, combat resolution, and fixed-capped game loop.
+ * Forgotten — Action RPG Entrypoint (Chunk 1 + Chunk 2 + Chunk 3)
+ * Orchestrates renderer, modular subsystems, Dynamic Day/Night Cycle,
+ * multi-biome world, combat/projectiles, and Settings Menu pause state.
  */
 class Game {
   constructor() {
@@ -34,14 +35,17 @@ class Game {
     this.input = new InputManager(this.canvas);
     this.world = new World(this.scene);
     this.player = new Player(this.scene, new THREE.Vector3(0, 0, 10.6));
-    this.enemyManager = new EnemyManager(this.scene);
+    this.enemyManager = new EnemyManager(this.scene, this.world);
     this.combat = new CombatSystem(this.scene);
     this.cameraController = new ThirdPersonCamera(
       window.innerWidth / Math.max(window.innerHeight, 1)
     );
     this.hud = new HUD();
 
+    this.isPaused = false;
+
     this._wireCombatCallbacks();
+    this._wireSettingsCallbacks();
 
     this._lastTime = performance.now();
     this._elapsed = 0;
@@ -50,7 +54,7 @@ class Game {
     this._onResize = this._handleResize.bind(this);
     window.addEventListener('resize', this._onResize);
 
-    // Expose read-only runtime handle for debugging/future chunks
+    // Expose runtime handle for debugging and E2E verification
     window.__FORGOTTEN__ = this;
   }
 
@@ -70,12 +74,53 @@ class Game {
       this.combat.spawnBurst(burstPos, new THREE.Vector3(0, 1, 0), 16, 'heal');
     };
 
-    this.enemyManager.onEnemyKilled = (enemy, remaining) => {
+    this.enemyManager.onShootProjectile = (origin, target, enemy) => {
+      this.combat.spawnWebProjectile(origin, target, enemy);
+    };
+
+    this.enemyManager.onEnemyKilled = (enemy, remainingInBiome) => {
+      const regionLabel =
+        enemy.biome === 'plains'
+          ? 'Outpost Cleared'
+          : enemy.biome === 'mountains'
+          ? 'High Pass Cleared'
+          : 'Courtyard Cleared';
       const subtitle =
-        remaining === 0
-          ? `${enemy.name} Vanquished — Courtyard Cleared`
+        remainingInBiome === 0
+          ? `${enemy.name} Vanquished — ${regionLabel}`
           : `${enemy.name} Vanquished`;
       this.hud.showBanner('ENEMY FELLED', subtitle, 2.4, true);
+    };
+  }
+
+  _wireSettingsCallbacks() {
+    const applySettings = (s) => {
+      this.cameraController.setSensitivityScale(s.sensitivityScale);
+      this.cameraController.setInvertY(s.invertY);
+      this.combat.setVolume((s.volume ?? 80) / 100);
+      this.combat.setMuted(Boolean(s.muted));
+      this.world.setTimePreset(s.todPreset || 'auto');
+      this.world.setTimeScale(typeof s.todSpeed === 'number' ? s.todSpeed : 1);
+    };
+
+    // Apply initial (or localStorage-persisted) settings immediately
+    applySettings(this.hud.settings);
+
+    this.hud.onSettingsChange = (s) => {
+      applySettings(s);
+    };
+
+    this.hud.onPauseChange = (paused) => {
+      this.isPaused = paused;
+      this.input.uiBlocked = paused;
+      if (paused) {
+        this.input.releasePointerLock();
+        this.input.clearActiveInputs();
+      }
+    };
+
+    this.hud.onRespawnAtGrace = () => {
+      this._respawnCycle();
     };
   }
 
@@ -84,12 +129,17 @@ class Game {
   }
 
   _respawnCycle() {
+    const activeGrace = this.world.getActiveGraceShrine();
+    if (activeGrace) {
+      this.player.setRespawnGrace(activeGrace.respawnPos, activeGrace.respawnYaw);
+    }
     this.player.respawnAtGrace();
     this.enemyManager.spawnAll();
-    this.world.triggerGraceRest();
+    this.world.triggerGraceRest(activeGrace);
     this.cameraController.lockedTarget = null;
     this.combat.playSound('grace');
-    this.hud.showBanner('ASHEN RUINS', 'Awakened at the Grace', 2.4, true);
+    const title = activeGrace ? activeGrace.name.toUpperCase() : 'ASHEN RUINS';
+    this.hud.showBanner(title, 'Awakened at the Grace', 2.4, true);
   }
 
   _handleResize() {
@@ -104,8 +154,10 @@ class Game {
     const tick = (now) => {
       const rawDt = (now - this._lastTime) * 0.001;
       this._lastTime = now;
-      const dt = Math.min(rawDt, 0.05); // Cap delta time to prevent physics spikes
-      this._elapsed += dt;
+      const dt = Math.min(rawDt, 0.05);
+      if (!this.isPaused) {
+        this._elapsed += dt;
+      }
 
       this._update(dt);
       this.renderer.render(this.scene, this.cameraController.camera);
@@ -118,7 +170,27 @@ class Game {
   _update(dt) {
     this.input.beginFrame();
 
+    // Toggle Settings Menu on Escape key
+    if (this.input.wasActionPressed('toggleSettings')) {
+      this.hud.toggleSettings();
+    }
+
     const lockableTargets = this._getAllLockableTargets();
+
+    // Pause gameplay simulation cleanly while Settings Menu is open
+    if (this.isPaused) {
+      this.hud.update(
+        dt,
+        this.player,
+        this.cameraController,
+        this.world,
+        this.input,
+        this.enemyManager.enemies
+      );
+      this.input.endFrame();
+      return;
+    }
+
     const simDt = this.combat.consumeHitStop(dt);
 
     if (this.player.actionState === 'dead') {
@@ -139,13 +211,12 @@ class Game {
         this.cameraController.cycleLockOn(lockableTargets, this.player.position, 1);
       }
 
-      // Site of Grace Interaction (F)
-      if (
-        this.input.wasActionPressed('interact') &&
-        this.world.isNearGrace(this.player.position)
-      ) {
+      // Site of Grace Interaction (F) across any of the 3 Biome Grace Shrines
+      const nearShrine = this.world.getNearestGrace(this.player.position);
+      if (this.input.wasActionPressed('interact') && nearShrine) {
+        this.player.setRespawnGrace(nearShrine.respawnPos, nearShrine.respawnYaw);
         this.player.restoreAtGrace();
-        this.world.triggerGraceRest();
+        this.world.triggerGraceRest(nearShrine);
         this.enemyManager.spawnAll();
         if (this.cameraController.lockedTarget && this.cameraController.lockedTarget.isEnemy) {
           this.cameraController.lockedTarget = null;
@@ -153,7 +224,7 @@ class Game {
         this.combat.playSound('grace');
         this.hud.showBanner(
           'GRACE RESTORED',
-          'Vitals, Flasks & Courtyard Enemies Reset',
+          `${nearShrine.name} — Vitals, Flasks & Foes Reset`,
           2.6,
           true
         );
@@ -164,7 +235,13 @@ class Game {
     if (simDt > 0) {
       this.player.update(simDt, this.input, this.cameraController, this.world);
       this.enemyManager.update(simDt, this.player, this.world);
-      this.combat.resolveHits(this.player, this.enemyManager, this.world, this.cameraController);
+      this.combat.resolveHits(
+        this.player,
+        this.enemyManager,
+        this.world,
+        this.cameraController,
+        simDt
+      );
       this.world.update(simDt, this._elapsed, this.player.position);
     } else {
       // Preserve player combat presses fired on a hit-stop freeze frame

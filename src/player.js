@@ -75,12 +75,16 @@ export class Player {
   constructor(scene, spawnPosition = new THREE.Vector3(0, 0, 10.6)) {
     this.scene = scene;
     this.spawnPosition = spawnPosition.clone();
+    this.spawnYaw = Math.PI;
 
     // World transform state
     this.position = spawnPosition.clone();
     this.velocity = new THREE.Vector3();
     this.facingYaw = Math.PI; // Facing -Z toward the Grace & Eclipse
     this.collisionRadius = 0.42;
+
+    // Web-slow debuff state (inflicted by Giant Frost Spider web spit)
+    this.webSlowTimer = 0;
 
     // Combat & Resource Stats
     this.stats = {
@@ -299,6 +303,60 @@ export class Player {
       sideTasset.rotation.z = side * 0.18;
       pelvis.add(sideTasset);
     });
+
+    // Wayfarer's Hip Lantern (automatically ignites at dusk/night)
+    const lanternPivot = new THREE.Group();
+    lanternPivot.position.set(-0.23, -0.02, 0.08);
+    pelvis.add(lanternPivot);
+    this.pivots.lantern = lanternPivot;
+
+    const lanternCap = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.03, 0.055, 0.04, 6),
+      mat.brass
+    );
+    lanternCap.position.y = -0.03;
+    lanternPivot.add(lanternCap);
+
+    this._lanternMat = new THREE.MeshStandardMaterial({
+      color: 0xffb85c,
+      emissive: 0xff8c24,
+      emissiveIntensity: 0.35,
+      roughness: 0.2,
+      metalness: 0.1,
+      flatShading: true,
+    });
+    const lanternGlass = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.042, 0.038, 0.09, 6),
+      this._lanternMat
+    );
+    lanternGlass.position.y = -0.095;
+    lanternPivot.add(lanternGlass);
+
+    const lanternBase = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.045, 0.032, 0.03, 6),
+      mat.brass
+    );
+    lanternBase.position.y = -0.15;
+    lanternPivot.add(lanternBase);
+
+    this.lanternLight = new THREE.PointLight(0xffad52, 0.5, 14.5, 1.35);
+    this.lanternLight.position.set(0, -0.1, 0.05);
+    lanternPivot.add(this.lanternLight);
+
+    // Subtle Frost-Web snare ring (visible when slowed by Giant Frost Spider web)
+    this._webSlowMesh = new THREE.Mesh(
+      new THREE.TorusGeometry(0.36, 0.028, 5, 10),
+      new THREE.MeshBasicMaterial({
+        color: 0xbbeeff,
+        transparent: true,
+        opacity: 0.72,
+        wireframe: true,
+      })
+    );
+    this._webSlowMesh.rotation.x = Math.PI * 0.5;
+    this._webSlowMesh.position.y = -0.25;
+    this._webSlowMesh.visible = false;
+    pelvis.add(this._webSlowMesh);
 
     // ------------------------------------------------------------------------
     // Torso / Cuirass / Baldric / Sheath / Cloak
@@ -767,12 +825,24 @@ export class Player {
     this.stats.flasks = this.stats.maxFlasks;
     this.stats.staminaExhausted = false;
     this.stats.regenDelayTimer = 0;
+    this.webSlowTimer = 0;
+    if (this._webSlowMesh) this._webSlowMesh.visible = false;
+  }
+
+  setRespawnGrace(pos, yaw = Math.PI) {
+    this.spawnPosition.copy(pos);
+    this.spawnYaw = yaw;
+  }
+
+  applyWebSlow(duration = 3.2) {
+    this.webSlowTimer = Math.max(this.webSlowTimer, duration);
+    if (this._webSlowMesh) this._webSlowMesh.visible = true;
   }
 
   respawnAtGrace() {
     this.position.copy(this.spawnPosition);
     this.velocity.set(0, 0, 0);
-    this.facingYaw = Math.PI;
+    this.facingYaw = this.spawnYaw ?? Math.PI;
     this.actionState = 'idle';
     this.isInvulnerable = false;
     this.isBlocking = false;
@@ -998,6 +1068,25 @@ export class Player {
       this._blockRecoilTimer = Math.max(0, this._blockRecoilTimer - dt);
     }
 
+    if (this.webSlowTimer > 0) {
+      this.webSlowTimer = Math.max(0, this.webSlowTimer - dt);
+      if (this._webSlowMesh) {
+        this._webSlowMesh.visible = this.webSlowTimer > 0;
+        this._webSlowMesh.rotation.z += dt * 2.5;
+      }
+    }
+
+    // Automatically toggle/scale player hip-lantern intensity based on world night factor
+    if (this.lanternLight && world) {
+      const nf = world.nightLightFactor ?? 0;
+      const flicker = Math.sin(performance.now() * 0.011) * 0.12;
+      const targetLantern = nf > 0.12 ? nf * 2.45 + flicker * nf : 0;
+      this.lanternLight.intensity = Math.max(0, targetLantern);
+      if (this._lanternMat) {
+        this._lanternMat.emissiveIntensity = 0.15 + nf * 2.1;
+      }
+    }
+
     // ------------------------------------------------------------------------
     // Dead State
     // ------------------------------------------------------------------------
@@ -1215,13 +1304,15 @@ export class Player {
           this.actionState = 'idle';
         }
 
-        const targetSpeed = canSprint
-          ? this.sprintSpeed
-          : wantsMove
-          ? wantsBlock
-            ? this.blockWalkSpeed
-            : this.walkSpeed
-          : 0;
+        const slowScale = this.webSlowTimer > 0 ? 0.55 : 1.0;
+        const targetSpeed =
+          (canSprint
+            ? this.sprintSpeed
+            : wantsMove
+            ? wantsBlock
+              ? this.blockWalkSpeed
+              : this.walkSpeed
+            : 0) * slowScale;
         const targetVx = worldMoveDir.x * targetSpeed;
         const targetVz = worldMoveDir.z * targetSpeed;
         const accelLambda = wantsMove ? 14.0 : 16.5;
@@ -1283,7 +1374,9 @@ export class Player {
     this.position.z += this.velocity.z * dt;
     world.resolveCollision(this.position, this.collisionRadius);
 
-    const targetGroundY = world.getGroundHeight(this.position.x, this.position.z);
+    const targetGroundY = world.getTerrainHeight
+      ? world.getTerrainHeight(this.position.x, this.position.z)
+      : world.getGroundHeight(this.position.x, this.position.z);
     this.position.y = damp(this.position.y, targetGroundY, 22.0, dt);
 
     this.root.position.copy(this.position);

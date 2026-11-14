@@ -97,9 +97,114 @@
         <span id="interact-text">Rest at Site of Grace</span>
       </div>
 
-      <!-- Pointer Lock Subtle Prompt -->
+      <!-- Top-Right World Status, Pointer Lock Prompt & Settings Button -->
+      <div id="top-right-hud">
+        <div id="world-status-badge" aria-live="off">
+          <span id="tod-indicator">Crimson Dusk</span>
+          <span class="status-sep">·</span>
+          <span id="biome-indicator">Ashen Overlook</span>
+        </div>
+        <button id="settings-toggle-btn" type="button" aria-label="Open Settings Menu">
+          <span class="gear-glyph" aria-hidden="true">&#9881;</span>
+          <span>Settings</span>
+          <kbd>Esc</kbd>
+        </button>
+      </div>
+
       <div id="pointer-prompt">
         <span>Click viewport to lock camera</span>
+      </div>
+
+      <!-- Dark-Fantasy Settings & Pause Modal -->
+      <div id="settings-modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <div class="settings-panel">
+          <div class="banner-rule"></div>
+          <h2 id="settings-title" class="settings-heading">SYSTEM SETTINGS</h2>
+          <p class="settings-subtitle">Gameplay Paused</p>
+          <div class="banner-rule"></div>
+
+          <div class="settings-body">
+            <!-- Camera Sensitivity Slider -->
+            <div class="setting-row">
+              <div class="setting-label-wrap">
+                <label for="setting-sensitivity" class="setting-label">Camera Sensitivity</label>
+                <span id="setting-sensitivity-val" class="setting-readout">1.00x (0.0010)</span>
+              </div>
+              <input
+                id="setting-sensitivity"
+                type="range"
+                min="0.20"
+                max="2.50"
+                step="0.05"
+                value="1.00"
+              />
+            </div>
+
+            <!-- Invert Y-Axis Toggle -->
+            <div class="setting-row setting-row-inline">
+              <label for="setting-invert-y" class="setting-label">Invert Y-Axis</label>
+              <label class="souls-toggle">
+                <input id="setting-invert-y" type="checkbox" />
+                <span class="toggle-track"></span>
+                <span id="setting-invert-y-text" class="toggle-state-text">Off</span>
+              </label>
+            </div>
+
+            <!-- Audio Volume & Mute Toggle -->
+            <div class="setting-row">
+              <div class="setting-label-wrap">
+                <label for="setting-volume" class="setting-label">Master Volume</label>
+                <span id="setting-volume-val" class="setting-readout">80%</span>
+              </div>
+              <div class="volume-controls-wrap">
+                <input
+                  id="setting-volume"
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="5"
+                  value="80"
+                />
+                <label class="souls-toggle mute-toggle">
+                  <input id="setting-mute" type="checkbox" />
+                  <span class="toggle-track"></span>
+                  <span id="setting-mute-text" class="toggle-state-text">Mute</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Dynamic Day/Night Cycle Preset & Speed -->
+            <div class="setting-row">
+              <div class="setting-label-wrap">
+                <label for="setting-tod-preset" class="setting-label">Time of Day</label>
+                <span id="setting-tod-readout" class="setting-readout">Auto Cycle</span>
+              </div>
+              <div class="tod-controls-wrap">
+                <select id="setting-tod-preset" class="souls-select">
+                  <option value="auto">Auto Cycle (5m)</option>
+                  <option value="dawn">Dawn</option>
+                  <option value="day">Golden Day</option>
+                  <option value="dusk">Crimson Dusk</option>
+                  <option value="night">Moonlit Night</option>
+                </select>
+                <select id="setting-tod-speed" class="souls-select" aria-label="Cycle Speed">
+                  <option value="1">1x Speed</option>
+                  <option value="4">4x Fast</option>
+                  <option value="0">Paused</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-actions">
+            <button id="settings-resume-btn" type="button" class="souls-btn souls-btn-primary">
+              Resume Game
+            </button>
+            <button id="settings-respawn-btn" type="button" class="souls-btn">
+              Respawn at Last Grace
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- Subtle Control Hints -->
@@ -119,6 +224,8 @@
         <div class="hint-item"><kbd>F</kbd><span>Grace</span></div>
         <div class="hint-sep">·</div>
         <div class="hint-item"><kbd>Q</kbd>/<kbd>MMB</kbd><span>Lock</span></div>
+        <div class="hint-sep">·</div>
+        <div class="hint-item"><kbd>Esc</kbd><span>Settings</span></div>
       </footer>
     </div>
   </div>

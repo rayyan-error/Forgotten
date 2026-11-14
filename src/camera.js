@@ -37,7 +37,11 @@ export class ThirdPersonCamera {
 
     this.minPitch = -0.32;
     this.maxPitch = 1.08;
-    this.sensitivity = 0.0023;
+    // Lowered default mouse look sensitivity (~43% of previous 0.0023) for weighted Souls-style camera control
+    this.defaultSensitivity = 0.001;
+    this.sensitivityScale = 1.0;
+    this.sensitivity = this.defaultSensitivity * this.sensitivityScale;
+    this.invertY = false;
 
     this.focusPos = new THREE.Vector3(0, 1.45, 10.6);
     this.lookAtPos = new THREE.Vector3(0, 1.35, 0);
@@ -59,6 +63,15 @@ export class ThirdPersonCamera {
   resize(width, height) {
     this.camera.aspect = width / Math.max(height, 1);
     this.camera.updateProjectionMatrix();
+  }
+
+  setSensitivityScale(scale) {
+    this.sensitivityScale = THREE.MathUtils.clamp(Number(scale) || 1.0, 0.15, 3.0);
+    this.sensitivity = this.defaultSensitivity * this.sensitivityScale;
+  }
+
+  setInvertY(invert) {
+    this.invertY = Boolean(invert);
   }
 
   addTrauma(amount) {
@@ -248,9 +261,10 @@ export class ThirdPersonCamera {
       this.pitch = damp(this.pitch, this.targetPitch, 12, dt);
     } else {
       if (input.mouseDeltaX !== 0 || input.mouseDeltaY !== 0) {
+        const pitchSign = this.invertY ? -1 : 1;
         this.targetYaw -= input.mouseDeltaX * this.sensitivity;
         this.targetPitch = THREE.MathUtils.clamp(
-          this.targetPitch + input.mouseDeltaY * this.sensitivity,
+          this.targetPitch + input.mouseDeltaY * this.sensitivity * pitchSign,
           this.minPitch,
           this.maxPitch
         );
