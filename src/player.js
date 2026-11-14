@@ -939,12 +939,16 @@ export class Player {
     return this.shieldCenterMarker.getWorldPosition(out);
   }
 
-  consumeBlockStamina(staminaDamage) {
-    this._blockRecoilTimer = 0.18;
+  consumeBlockStamina(staminaDamage, knockbackDir = null, knockForce = 2.6) {
+    this._blockRecoilTimer = 0.22;
+    if (knockbackDir) {
+      this.velocity.x += knockbackDir.x * knockForce;
+      this.velocity.z += knockbackDir.z * knockForce;
+    }
     this._consumeStamina(staminaDamage);
     if (this.stats.stamina <= 0) {
       this.triggerGuardBreak();
-      return true; // guard broken!
+      return true; // Guard broken!
     }
     return false;
   }
@@ -1233,8 +1237,8 @@ export class Player {
           if (toTargetX * toTargetX + toTargetZ * toTargetZ > 0.001) {
             targetYaw = Math.atan2(toTargetX, toTargetZ);
           }
-        } else if (wantsBlock && !wantsMove) {
-          // Align guard cleanly toward camera forward when standing and blocking
+        } else if (wantsBlock) {
+          // Keep kite shield angled toward camera threat direction while strafing/backpedaling
           targetYaw = cameraController.yaw + Math.PI;
         } else if (wantsMove) {
           targetYaw = Math.atan2(worldMoveDir.x, worldMoveDir.z);
@@ -1460,6 +1464,7 @@ export class Player {
     }
 
     p.shield.rotation.y = damp(p.shield.rotation.y, Math.PI * 0.5, 14, dt);
+    p.shield.rotation.z = damp(p.shield.rotation.z, 0, 14, dt);
 
     // ------------------------------------------------------------------------
     // Greatsword 3-Hit Combo & Heavy Cleave Animations
@@ -1530,29 +1535,30 @@ export class Player {
     p.hipR.rotation.z = damp(p.hipR.rotation.z, -0.04 - strafeHipR, 14, dt);
     p.kneeR.rotation.x = damp(p.kneeR.rotation.x, 0.08 + blk * 0.18 + kneeLiftR + Math.max(0, swingR) * 0.35, 16, dt);
 
-    // Left Arm: Ready Guard -> Raised Front Kite Shield Block!
+    // Left Arm: Ready Guard -> Raised Front Kite Shield Block across center-chest!
     const lockShieldRaise = this.isLockedOn && !isSprinting ? 0.32 : 0;
-    const recoilKick = this._blockRecoilTimer > 0 ? Math.sin((this._blockRecoilTimer / 0.18) * Math.PI) * 0.32 : 0;
+    const recoilKick = this._blockRecoilTimer > 0 ? Math.sin((this._blockRecoilTimer / 0.22) * Math.PI) * 0.36 : 0;
     const armSwingL = swingR * (0.48 + sprintAmt * 0.32) * (1 - blk * 0.85);
 
-    const guardShoulderX = -0.96 + recoilKick;
-    const guardShoulderY = 0.78;
-    const guardShoulderZ = -0.18 - recoilKick * 0.4;
-    const guardElbowX = -1.28;
+    const guardShoulderX = -0.88 + recoilKick;
+    const guardShoulderY = -0.58;
+    const guardShoulderZ = 0.14 - recoilKick * 0.35;
+    const guardElbowX = -1.26;
 
     const freeShoulderX =
       (1 - moveAmt) * (-0.18 - idleBreath * 0.02) +
       moveAmt * (-0.28 + armSwingL) -
       lockShieldRaise;
-    const freeShoulderY = (1 - moveAmt) * 0.18 + lockShieldRaise * 0.85;
-    const freeShoulderZ = 0.12 - lockShieldRaise * 0.25;
-    const freeElbowX = -0.58 - lockShieldRaise * 0.72 - sprintAmt * 0.22;
+    const freeShoulderY = -(1 - moveAmt) * 0.14 - lockShieldRaise * 0.55;
+    const freeShoulderZ = 0.12 + lockShieldRaise * 0.12;
+    const freeElbowX = -0.58 - lockShieldRaise * 0.68 - sprintAmt * 0.22;
 
-    p.shoulderL.rotation.x = damp(p.shoulderL.rotation.x, THREE.MathUtils.lerp(freeShoulderX, guardShoulderX, blk), 16, dt);
-    p.shoulderL.rotation.y = damp(p.shoulderL.rotation.y, THREE.MathUtils.lerp(freeShoulderY, guardShoulderY, blk), 16, dt);
-    p.shoulderL.rotation.z = damp(p.shoulderL.rotation.z, THREE.MathUtils.lerp(freeShoulderZ, guardShoulderZ, blk), 16, dt);
-    p.elbowL.rotation.x = damp(p.elbowL.rotation.x, THREE.MathUtils.lerp(freeElbowX, guardElbowX, blk), 16, dt);
-    p.shield.rotation.y = damp(p.shield.rotation.y, THREE.MathUtils.lerp(Math.PI * 0.5, Math.PI * 0.14, blk), 16, dt);
+    p.shoulderL.rotation.x = damp(p.shoulderL.rotation.x, THREE.MathUtils.lerp(freeShoulderX, guardShoulderX, blk), 18, dt);
+    p.shoulderL.rotation.y = damp(p.shoulderL.rotation.y, THREE.MathUtils.lerp(freeShoulderY, guardShoulderY, blk), 18, dt);
+    p.shoulderL.rotation.z = damp(p.shoulderL.rotation.z, THREE.MathUtils.lerp(freeShoulderZ, guardShoulderZ, blk), 18, dt);
+    p.elbowL.rotation.x = damp(p.elbowL.rotation.x, THREE.MathUtils.lerp(freeElbowX, guardElbowX, blk), 18, dt);
+    p.shield.rotation.y = damp(p.shield.rotation.y, THREE.MathUtils.lerp(Math.PI * 0.5, Math.PI * 0.66, blk), 18, dt);
+    p.shield.rotation.z = damp(p.shield.rotation.z, -0.1 * blk, 18, dt);
 
     // Right Arm: Greatsword held ready (pulled back defensively while blocking)
     const armSwingR = swingL * (0.52 + sprintAmt * 0.35) * (1 - blk * 0.75);

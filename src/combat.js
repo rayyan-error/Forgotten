@@ -153,19 +153,21 @@ export class CombatSystem {
     this.scene.add(this._particleGroup);
     this._shardGeo = new THREE.OctahedronGeometry(0.055, 0);
 
-    // Procedural Slash Trail Ribbon
+    // Procedural Slash Trail Ribbons (Player + Enemy active attack trails)
     this._maxTrailSamples = 18;
     this._trailSamples = [];
     this._lastSwingId = -1;
-    this._setupSlashRibbon();
+    this._trailMesh = this._createRibbonMesh(this._maxTrailSamples);
+
+    this._enemyTrailStates = new Map();
   }
 
-  _setupSlashRibbon() {
-    const maxVerts = this._maxTrailSamples * 2;
-    this._trailPositions = new Float32Array(maxVerts * 3);
-    this._trailColors = new Float32Array(maxVerts * 4);
+  _createRibbonMesh(maxSamples) {
+    const maxVerts = maxSamples * 2;
+    const positions = new Float32Array(maxVerts * 3);
+    const colors = new Float32Array(maxVerts * 4);
     const indices = [];
-    for (let i = 0; i < this._maxTrailSamples - 1; i++) {
+    for (let i = 0; i < maxSamples - 1; i++) {
       const a = i * 2;
       const b = i * 2 + 1;
       const c = (i + 1) * 2;
@@ -174,8 +176,8 @@ export class CombatSystem {
     }
 
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(this._trailPositions, 3));
-    geo.setAttribute('aColor', new THREE.BufferAttribute(this._trailColors, 4));
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('aColor', new THREE.BufferAttribute(colors, 4));
     geo.setIndex(indices);
     geo.setDrawRange(0, 0);
 
@@ -200,9 +202,10 @@ export class CombatSystem {
       `,
     });
 
-    this._trailMesh = new THREE.Mesh(geo, mat);
-    this._trailMesh.frustumCulled = false;
-    this.scene.add(this._trailMesh);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.frustumCulled = false;
+    this.scene.add(mesh);
+    return mesh;
   }
 
   triggerHitStop(duration) {
@@ -309,44 +312,42 @@ export class CombatSystem {
     }
   }
 
-  _updateSlashTrail(dt, player) {
-    // Age existing ribbon samples
-    for (let i = this._trailSamples.length - 1; i >= 0; i--) {
-      this._trailSamples[i].age += dt;
-      if (this._trailSamples[i].age >= this._trailSamples[i].maxAge) {
-        this._trailSamples.splice(i, 1);
+  _updateRibbonTrail(dt, samples, lastSwingIdRef, activeTrail, mesh, maxSamples, isEnemy = false) {
+    for (let i = samples.length - 1; i >= 0; i--) {
+      samples[i].age += dt;
+      if (samples[i].age >= samples[i].maxAge) {
+        samples.splice(i, 1);
       }
     }
 
-    const activeTrail = player.isSlashTrailActive();
     if (activeTrail) {
-      if (activeTrail.swingId !== this._lastSwingId) {
-        this._lastSwingId = activeTrail.swingId;
-        this._trailSamples.length = 0;
+      if (activeTrail.swingId !== lastSwingIdRef.id) {
+        lastSwingIdRef.id = activeTrail.swingId;
+        samples.length = 0;
       }
-      this._trailSamples.unshift({
+      samples.unshift({
         base: activeTrail.base.clone(),
         tip: activeTrail.tip.clone(),
         age: 0,
-        maxAge: activeTrail.isHeavy ? 0.24 : 0.16,
+        maxAge: isEnemy ? 0.16 : activeTrail.isHeavy ? 0.24 : 0.16,
         isHeavy: activeTrail.isHeavy,
       });
-      if (this._trailSamples.length > this._maxTrailSamples) {
-        this._trailSamples.length = this._maxTrailSamples;
+      if (samples.length > maxSamples) {
+        samples.length = maxSamples;
       }
     }
 
-    const count = this._trailSamples.length;
+    const count = samples.length;
     if (count < 2) {
-      this._trailMesh.geometry.setDrawRange(0, 0);
+      mesh.geometry.setDrawRange(0, 0);
       return;
     }
 
-    const posAttr = this._trailMesh.geometry.getAttribute('position');
-    const colAttr = this._trailMesh.geometry.getAttribute('aColor');
+    const posAttr = mesh.geometry.getAttribute('position');
+    const colAttr = mesh.geometry.getAttribute('aColor');
 
     for (let i = 0; i < count; i++) {
-      const s = this._trailSamples[i];
+      const s = samples[i];
       const lifeRatio = 1 - s.age / s.maxAge;
       const tailFade = 1 - i / Math.max(count - 1, 1);
       const alphaTip = Math.pow(lifeRatio * tailFade, 1.35) * (s.isHeavy ? 0.85 : 0.65);
@@ -355,7 +356,10 @@ export class CombatSystem {
       posAttr.setXYZ(i * 2, s.base.x, s.base.y, s.base.z);
       posAttr.setXYZ(i * 2 + 1, s.tip.x, s.tip.y, s.tip.z);
 
-      if (s.isHeavy) {
+      if (isEnemy) {
+        colAttr.setXYZW(i * 2, 0.72, 0.14, 0.05, alphaBase);
+        colAttr.setXYZW(i * 2 + 1, 1.0, 0.42, 0.16, alphaTip * 0.85);
+      } else if (s.isHeavy) {
         colAttr.setXYZW(i * 2, 0.95, 0.28, 0.08, alphaBase);
         colAttr.setXYZW(i * 2 + 1, 1.0, 0.88, 0.45, alphaTip);
       } else {
@@ -366,7 +370,60 @@ export class CombatSystem {
 
     posAttr.needsUpdate = true;
     colAttr.needsUpdate = true;
-    this._trailMesh.geometry.setDrawRange(0, (count - 1) * 6);
+    mesh.geometry.setDrawRange(0, (count - 1) * 6);
+  }
+
+  _updateSlashTrails(dt, player, enemies) {
+    const playerRef = { id: this._lastSwingId };
+    this._updateRibbonTrail(
+      dt,
+      this._trailSamples,
+      playerRef,
+      player.isSlashTrailActive(),
+      this._trailMesh,
+      this._maxTrailSamples,
+      false
+    );
+    this._lastSwingId = playerRef.id;
+
+    // 1:1 visual active trail for enemy attacks during active strike frames
+    const seenIds = new Set();
+    const maxEnemySamples = 12;
+    for (let i = 0; i < enemies.length; i++) {
+      const enemy = enemies[i];
+      seenIds.add(enemy.id);
+      const active = enemy.isSlashTrailActive();
+      let state = this._enemyTrailStates.get(enemy.id);
+      if (!state && active) {
+        state = {
+          samples: [],
+          lastSwingRef: { id: null },
+          mesh: this._createRibbonMesh(maxEnemySamples),
+        };
+        this._enemyTrailStates.set(enemy.id, state);
+      }
+      if (state) {
+        this._updateRibbonTrail(
+          dt,
+          state.samples,
+          state.lastSwingRef,
+          active,
+          state.mesh,
+          maxEnemySamples,
+          true
+        );
+      }
+    }
+
+    // Prune stale enemy ribbon meshes after Grace respawn
+    for (const [id, state] of this._enemyTrailStates.entries()) {
+      if (!seenIds.has(id)) {
+        this.scene.remove(state.mesh);
+        state.mesh.geometry.dispose();
+        state.mesh.material.dispose();
+        this._enemyTrailStates.delete(id);
+      }
+    }
   }
 
   /**
@@ -446,23 +503,35 @@ export class CombatSystem {
     // 2. Enemy Attack Hitboxes vs. Player
     if (player.actionState === 'dead') return;
 
+    const SHIELD_BLOCK_MIN_DOT = Math.cos(THREE.MathUtils.degToRad(70)); // ~140° frontal shield cone
     const enemies = enemyManager.enemies;
     const playerForwardX = Math.sin(player.facingYaw);
     const playerForwardZ = Math.cos(player.facingYaw);
     const playerSamplePts = [
-      new THREE.Vector3(player.position.x, player.position.y + 0.65, player.position.z),
-      new THREE.Vector3(player.position.x, player.position.y + 1.15, player.position.z),
+      new THREE.Vector3(player.position.x, player.position.y + 0.45, player.position.z),
+      new THREE.Vector3(player.position.x, player.position.y + 0.98, player.position.z),
+      new THREE.Vector3(player.position.x, player.position.y + 1.48, player.position.z),
     ];
+    const midBase = new THREE.Vector3();
+    const midTip = new THREE.Vector3();
 
     for (let i = 0; i < enemies.length; i++) {
       const enemy = enemies[i];
       const atk = enemy.getActiveAttack();
       if (!atk) continue;
 
+      midBase.lerpVectors(atk.prevBase, atk.base, 0.5);
+      midTip.lerpVectors(atk.prevTip, atk.tip, 0.5);
+
       const hitRadiusSq = Math.pow(player.collisionRadius + atk.radius, 2);
       let overlaps = false;
       for (let p = 0; p < playerSamplePts.length; p++) {
-        if (pointToSegmentDistSq(playerSamplePts[p], atk.base, atk.tip) <= hitRadiusSq) {
+        const pt = playerSamplePts[p];
+        if (
+          pointToSegmentDistSq(pt, atk.base, atk.tip) <= hitRadiusSq ||
+          pointToSegmentDistSq(pt, atk.prevBase, atk.prevTip) <= hitRadiusSq ||
+          pointToSegmentDistSq(pt, midBase, midTip) <= hitRadiusSq
+        ) {
           overlaps = true;
           break;
         }
@@ -473,34 +542,43 @@ export class CombatSystem {
       // Consume enemy swing once overlap connects
       enemy.markAttackHit();
 
-      // A) i-Frame Dodge Negation!
+      // Priority 1: Active Dodge-Roll / Backstep i-frames -> completely evade (0 HP & 0 Stamina lost)
       if (player.isInvulnerable) {
         continue;
       }
 
-      const toEnemyX = enemy.position.x - player.position.x;
-      const toEnemyZ = enemy.position.z - player.position.z;
+      const refX = enemy.position.x;
+      const refZ = enemy.position.z;
+      const toEnemyX = refX - player.position.x;
+      const toEnemyZ = refZ - player.position.z;
       const dist = Math.hypot(toEnemyX, toEnemyZ) || 1;
       const dirToEnemyX = toEnemyX / dist;
       const dirToEnemyZ = toEnemyZ / dist;
+      const kbDir = new THREE.Vector3(-dirToEnemyX, 0, -dirToEnemyZ);
 
-      // B) Shield Block Angle Check (~155° frontal arc)
+      // Priority 2: Shield Block + Attacker within generous ~140° frontal cone
       const facingDot = playerForwardX * dirToEnemyX + playerForwardZ * dirToEnemyZ;
-      if (player.isBlocking && facingDot >= 0.18) {
+      if (player.isBlocking && facingDot >= SHIELD_BLOCK_MIN_DOT) {
         const shieldPos = player.getShieldWorldPos();
-        const sparkDir = new THREE.Vector3(dirToEnemyX, 0.4, dirToEnemyZ).normalize();
-        this.spawnBurst(shieldPos, sparkDir, 15, 'spark');
+        const sparkDir = new THREE.Vector3(dirToEnemyX, 0.42, dirToEnemyZ).normalize();
+        this.spawnBurst(shieldPos, sparkDir, 18, 'spark');
 
-        const guardBroken = player.consumeBlockStamina(atk.staminaDamage);
+        const guardBroken = player.consumeBlockStamina(
+          atk.staminaDamage,
+          kbDir,
+          atk.isHeavy ? 4.4 : 2.9
+        );
         this.triggerHitStop(guardBroken ? 0.055 : 0.032);
-        cameraController.addTrauma(guardBroken ? 0.48 : 0.24);
+        cameraController.addTrauma(guardBroken ? 0.5 : 0.28);
+        if (cameraController.addKnockbackImpulse) {
+          cameraController.addKnockbackImpulse(kbDir, guardBroken ? 0.36 : 0.2);
+        }
         this.sfx.play(guardBroken ? 'guardBreak' : 'blockClang');
         continue;
       }
 
-      // C) Unblocked Direct Hit
+      // Priority 3: Unblocked & Un-dodged -> Full HP Damage & Hit Reaction
       player.stats.hp = Math.max(0, player.stats.hp - atk.damage);
-      const kbDir = new THREE.Vector3(-dirToEnemyX, 0, -dirToEnemyZ);
       const hitCenter = player.getWorldCenter();
       this.spawnBurst(hitCenter, kbDir, 14, 'bloodAsh');
 
@@ -520,8 +598,8 @@ export class CombatSystem {
   /**
    * Visual-only effects update (runs smoothly even during hit-stop frames).
    */
-  updateEffects(dt, player) {
+  updateEffects(dt, player, enemies = []) {
     this._updateParticles(dt);
-    this._updateSlashTrail(dt, player);
+    this._updateSlashTrails(dt, player, enemies);
   }
 }

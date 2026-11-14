@@ -178,7 +178,7 @@ class Game {
     // Camera, Trauma Shake, VFX & HUD run smoothly every rendered frame
     this.cameraController.updateShake(dt);
     this.cameraController.update(dt, this.input, this.player, this.world, lockableTargets);
-    this.combat.updateEffects(dt, this.player);
+    this.combat.updateEffects(dt, this.player, this.enemyManager.enemies);
     this.hud.update(
       dt,
       this.player,

@@ -80,12 +80,12 @@ export class Enemy {
     this.poise = this.poiseMax;
     this.poiseRegenTimer = 0;
 
-    this.walkSpeed = isSentinel ? 2.0 : 2.2;
-    this.chaseSpeed = isSentinel ? 3.5 : 3.8;
-    this.aggroRadius = isSentinel ? 11.2 : 10.2;
+    this.walkSpeed = isSentinel ? 2.15 : 2.3;
+    this.chaseSpeed = isSentinel ? 3.85 : 4.05;
+    this.aggroRadius = isSentinel ? 12.4 : 10.8;
     this.loseAggroRadius = 22.0;
-    this.attackRange = isSentinel ? 3.05 : 2.3;
-    this.baseDamage = isSentinel ? 27 : 20;
+    this.attackRange = isSentinel ? 3.55 : 2.45;
+    this.baseDamage = isSentinel ? 26 : 20;
     this.staminaDamage = isSentinel ? 30 : 23;
 
     // Lock-on interface (matches World target API)
@@ -99,9 +99,17 @@ export class Enemy {
     this._strafeDir = Math.random() > 0.5 ? 1 : -1;
     this._strafeDuration = 1.0;
     this._attackCooldown = 0.4;
-    this._attackPattern = 0; // 0 = primary slash/thrust, 1 = heavy cleave/sweep
+    this._attackPattern = 0; // 0 = thrust/slash, 1 = sweep/overhead
+    this._attackMove = isSentinel ? 'thrust' : 'slash'; // 'thrust' | 'sweep' | 'slash' | 'overhead'
+    this._swingId = 0;
+    this._lungeVelocity = 0;
+    this._lungeDirX = 0;
+    this._lungeDirZ = 1;
+    this._prevWeaponBase = new THREE.Vector3();
+    this._prevWeaponTip = new THREE.Vector3();
+    this._hasPrevWeaponSample = false;
     this._windupDuration = 0.62;
-    this._attackDuration = 0.2;
+    this._attackDuration = 0.26;
     this._recoverDuration = 0.72;
     this._hasHitThisSwing = false;
     this._hitFlashTimer = 0;
@@ -324,8 +332,9 @@ export class Enemy {
       this.telegraphOrb.visible = false;
       weapon.add(this.telegraphOrb);
 
-      this.weaponBaseMarker.position.set(0, 0.7, 0);
-      this.weaponTipMarker.position.set(0, 1.84, 0);
+      // Full-length shaft + spearhead hitbox markers so close & mid-range thrusts/sweeps both connect reliably
+      this.weaponBaseMarker.position.set(0, 0.02, 0);
+      this.weaponTipMarker.position.set(0, 1.92, 0);
     } else {
       // Rusted Hollow Broadsword
       const hilt = shadow(
@@ -356,8 +365,8 @@ export class Enemy {
       this.telegraphOrb.visible = false;
       weapon.add(this.telegraphOrb);
 
-      this.weaponBaseMarker.position.set(0, 0.12, 0);
-      this.weaponTipMarker.position.set(0, 1.12, 0);
+      this.weaponBaseMarker.position.set(0, 0.06, 0);
+      this.weaponTipMarker.position.set(0, 1.18, 0);
     }
 
     // Skeletal Legs
@@ -400,7 +409,8 @@ export class Enemy {
   }
 
   /**
-   * Returns active attack data only during the offensive hitbox frames.
+   * Returns active attack data only during the offensive hitbox frames,
+   * including previous-frame segment for swept zero-tunneling overlap checks.
    */
   getActiveAttack() {
     if (!this.isAlive || this.aiState !== 'attack' || this._hasHitThisSwing) {
@@ -411,14 +421,55 @@ export class Enemy {
     this.weaponBaseMarker.getWorldPosition(base);
     this.weaponTipMarker.getWorldPosition(tip);
 
+    const prevBase = this._hasPrevWeaponSample
+      ? this._prevWeaponBase.clone()
+      : base.clone();
+    const prevTip = this._hasPrevWeaponSample
+      ? this._prevWeaponTip.clone()
+      : tip.clone();
+
+    this._prevWeaponBase.copy(base);
+    this._prevWeaponTip.copy(tip);
+    this._hasPrevWeaponSample = true;
+
+    const isHeavy = this._attackPattern === 1;
+    const radius =
+      this.archetype === 'sentinel'
+        ? this._attackMove === 'thrust'
+          ? 0.62
+          : 0.64
+        : 0.56;
+
     return {
       enemy: this,
-      damage: this._attackPattern === 1 ? Math.round(this.baseDamage * 1.35) : this.baseDamage,
-      staminaDamage: this._attackPattern === 1 ? Math.round(this.staminaDamage * 1.35) : this.staminaDamage,
-      isHeavy: this._attackPattern === 1,
+      swingId: this._swingId,
+      attackMove: this._attackMove,
+      damage: isHeavy ? Math.round(this.baseDamage * 1.32) : this.baseDamage,
+      staminaDamage: isHeavy ? Math.round(this.staminaDamage * 1.32) : this.staminaDamage,
+      isHeavy,
       base,
       tip,
-      radius: this.archetype === 'sentinel' ? 0.52 : 0.48,
+      prevBase,
+      prevTip,
+      radius,
+    };
+  }
+
+  /**
+   * Active strike trail sampling matching the exact offensive hitbox frames 1:1.
+   */
+  isSlashTrailActive() {
+    if (!this.isAlive || this.aiState !== 'attack') return null;
+    const base = new THREE.Vector3();
+    const tip = new THREE.Vector3();
+    this.weaponBaseMarker.getWorldPosition(base);
+    this.weaponTipMarker.getWorldPosition(tip);
+    return {
+      swingId: `${this.id}-${this._swingId}`,
+      base,
+      tip,
+      isHeavy: this._attackPattern === 1,
+      isThrust: this._attackMove === 'thrust',
     };
   }
 
@@ -518,38 +569,58 @@ export class Enemy {
     }
   }
 
-  _beginWindup(distToPlayer) {
+  _beginWindup(distToPlayer, forcedMove = null) {
     this.aiState = 'windup';
     this._stateTimer = 0;
     this._hasHitThisSwing = false;
+    this._hasPrevWeaponSample = false;
+    this._swingId += 1;
 
-    // Choose attack pattern (occasionally heavy overhead/sweep)
-    this._attackPattern = Math.random() < 0.32 ? 1 : 0;
     if (this.archetype === 'sentinel') {
-      this._windupDuration = this._attackPattern === 1 ? 0.78 : 0.64;
-      this._attackDuration = 0.22;
-      this._recoverDuration = 0.78;
+      if (forcedMove === 'thrust' || forcedMove === 'sweep') {
+        this._attackMove = forcedMove;
+      } else if (distToPlayer <= 2.35) {
+        // Close-range mixup: favor sweeping horizontal shaft cleave when circling tight
+        this._attackMove = Math.random() < 0.68 ? 'sweep' : 'thrust';
+      } else {
+        // Mid-range: favor fast lunging spear thrust
+        this._attackMove = Math.random() < 0.82 ? 'thrust' : 'sweep';
+      }
+      this._attackPattern = this._attackMove === 'sweep' ? 1 : 0;
+      this._windupDuration = this._attackMove === 'sweep' ? 0.72 : 0.6;
+      this._attackDuration = this._attackMove === 'sweep' ? 0.3 : 0.28;
+      this._recoverDuration = this._attackMove === 'sweep' ? 0.78 : 0.72;
     } else {
-      this._windupDuration = this._attackPattern === 1 ? 0.76 : 0.6;
-      this._attackDuration = 0.2;
-      this._recoverDuration = 0.72;
+      if (forcedMove === 'slash' || forcedMove === 'overhead') {
+        this._attackMove = forcedMove;
+      } else {
+        this._attackMove = Math.random() < 0.36 ? 'overhead' : 'slash';
+      }
+      this._attackPattern = this._attackMove === 'overhead' ? 1 : 0;
+      this._windupDuration = this._attackMove === 'overhead' ? 0.72 : 0.56;
+      this._attackDuration = 0.24;
+      this._recoverDuration = this._attackMove === 'overhead' ? 0.76 : 0.68;
     }
 
-    // Subtle step-in range bias
-    if (distToPlayer > this.attackRange * 0.95) {
-      this._windupDuration += 0.05;
+    if (distToPlayer > this.attackRange * 0.96) {
+      this._windupDuration += 0.04;
     }
   }
 
   update(dt, player, world, otherEnemies) {
     this._updateAshParticles(dt);
 
-    // Hit flash decay
+    // Hit flash & active weapon flare decay
     if (this._hitFlashTimer > 0) {
       this._hitFlashTimer = Math.max(0, this._hitFlashTimer - dt);
       const flash = this._hitFlashTimer > 0 ? 0.65 : 0;
       this._mat.armor.emissive.setRGB(flash * 0.8, flash * 0.25, flash * 0.15);
       this._mat.bone.emissive.setRGB(flash * 0.9, flash * 0.4, flash * 0.2);
+    }
+    if (this.aiState !== 'attack' && this.aiState !== 'windup') {
+      this._mat.rust.emissive.setRGB(0, 0, 0);
+      this.telegraphOrb.visible = false;
+      this._mat.eyeGlow.color.setHex(0xff3c1e);
     }
 
     if (this._damageBarTimer > 0) {
@@ -638,12 +709,12 @@ export class Enemy {
         }
         targetYaw = Math.atan2(dirToPlayerX, dirToPlayerZ);
 
-        if (distToPlayer <= this.attackRange * 0.92 && this._attackCooldown <= 0) {
+        if (distToPlayer <= this.attackRange * 0.94 && this._attackCooldown <= 0) {
           this._beginWindup(distToPlayer);
-        } else if (distToPlayer <= this.attackRange * 1.18) {
+        } else if (distToPlayer <= this.attackRange * 1.15) {
           this.aiState = 'strafe';
           this._stateTimer = 0;
-          this._strafeDuration = 0.55 + Math.random() * 0.7;
+          this._strafeDuration = 0.48 + Math.random() * 0.62;
           this._strafeDir = Math.random() > 0.5 ? 1 : -1;
         } else {
           desiredVx = dirToPlayerX * this.chaseSpeed;
@@ -660,18 +731,23 @@ export class Enemy {
         this._stateTimer += dt;
         targetYaw = Math.atan2(dirToPlayerX, dirToPlayerZ);
 
-        if (distToPlayer > this.attackRange * 1.45) {
+        if (distToPlayer > this.attackRange * 1.35) {
           this.aiState = 'pursue';
           break;
         }
 
-        // Circle tangentially while keeping ideal spacing
+        // Circle tangentially while staying inside optimal strike pocket
         const rightX = -dirToPlayerZ * this._strafeDir;
         const rightZ = dirToPlayerX * this._strafeDir;
-        const radialAdjust = distToPlayer < this.attackRange * 0.72 ? -0.6 : distToPlayer > this.attackRange * 1.05 ? 0.55 : 0;
+        const radialAdjust =
+          distToPlayer < this.attackRange * 0.6
+            ? -0.45
+            : distToPlayer > this.attackRange * 0.92
+            ? 0.65
+            : 0;
 
-        desiredVx = (rightX * 0.85 + dirToPlayerX * radialAdjust) * this.walkSpeed;
-        desiredVz = (rightZ * 0.85 + dirToPlayerZ * radialAdjust) * this.walkSpeed;
+        desiredVx = (rightX * 0.82 + dirToPlayerX * radialAdjust) * this.walkSpeed;
+        desiredVz = (rightZ * 0.82 + dirToPlayerZ * radialAdjust) * this.walkSpeed;
 
         if (this._stateTimer >= this._strafeDuration && this._attackCooldown <= 0) {
           this._beginWindup(distToPlayer);
@@ -681,44 +757,78 @@ export class Enemy {
 
       case 'windup': {
         this._stateTimer += dt;
-        const t = this._stateTimer / this._windupDuration;
+        const t = Math.min(this._stateTimer / this._windupDuration, 1);
 
-        // Track player slightly during early telegraph, then lock angle for fair dodging!
-        if (t < 0.55) {
+        // Active rotational tracking through wind-up, locking aim right before strike release
+        if (t < 0.86) {
           targetYaw = Math.atan2(dirToPlayerX, dirToPlayerZ);
         }
 
-        // Visual Telegraph: glowing weapon orb + bright crimson eyes!
+        // Aggressive step-in advance during late wind-up so swings don't whiff in place
+        if (t >= 0.48 && distToPlayer > 1.32) {
+          const advanceSpeed = this._attackMove === 'thrust' ? 2.7 : 2.1;
+          desiredVx = dirToPlayerX * advanceSpeed;
+          desiredVz = dirToPlayerZ * advanceSpeed;
+        }
+
+        // Visual Telegraph: amber pulsing glint orb + golden eyes
         this.telegraphOrb.visible = true;
-        const pulse = 0.7 + 0.65 * Math.sin(t * Math.PI);
+        this._mat.telegraphGlow.color.setHex(0xffa838);
+        this._mat.telegraphGlow.opacity = 0.88;
+        const pulse = 0.72 + 0.65 * Math.sin(t * Math.PI);
         this.telegraphOrb.scale.setScalar(pulse);
         this.telegraphOrb.rotation.y += dt * 7;
         this._mat.eyeGlow.color.setHex(0xffc966);
+        this._mat.rust.emissive.setRGB(0.28 * t, 0.14 * t, 0.03 * t);
 
         if (this._stateTimer >= this._windupDuration) {
           this.aiState = 'attack';
           this._stateTimer = 0;
-          this.telegraphOrb.visible = false;
-          this._mat.eyeGlow.color.setHex(0xff3c1e);
+          this._hasPrevWeaponSample = false;
 
-          // Forward lunge burst
+          // Lock aim at release & initiate active lunge velocity
           const fwdX = Math.sin(this.facingYaw);
           const fwdZ = Math.cos(this.facingYaw);
-          const lunge = this.archetype === 'sentinel' ? 7.4 : 5.8;
-          this.velocity.x = fwdX * lunge;
-          this.velocity.z = fwdZ * lunge;
+          this._lungeDirX = fwdX;
+          this._lungeDirZ = fwdZ;
+
+          if (this.archetype === 'sentinel') {
+            this._lungeVelocity = this._attackMove === 'thrust' ? 11.4 : 6.4;
+          } else {
+            this._lungeVelocity = this._attackMove === 'overhead' ? 7.6 : 6.8;
+          }
+          this.velocity.x = fwdX * this._lungeVelocity;
+          this.velocity.z = fwdZ * this._lungeVelocity;
         }
         break;
       }
 
       case 'attack': {
         this._stateTimer += dt;
-        // Lunge decays naturally
-        desiredVx = 0;
-        desiredVz = 0;
+        const tAtk = Math.min(this._stateTimer / this._attackDuration, 1);
+
+        // Sustained lunge velocity during active strike frames
+        const lungeCurve =
+          this._attackMove === 'thrust'
+            ? Math.max(0.15, 1 - tAtk * 0.55)
+            : Math.max(0.1, 1 - tAtk * 0.78);
+        desiredVx = this._lungeDirX * this._lungeVelocity * lungeCurve;
+        desiredVz = this._lungeDirZ * this._lungeVelocity * lungeCurve;
+
+        // 1:1 visual active strike cue: fiery crimson-gold weapon flare synced to hitbox window
+        this.telegraphOrb.visible = true;
+        this._mat.telegraphGlow.color.setHex(0xff5a2a);
+        this._mat.telegraphGlow.opacity = 0.95 * (1 - tAtk * 0.35);
+        this.telegraphOrb.scale.setScalar(1.32 - tAtk * 0.45);
+        this.telegraphOrb.rotation.y += dt * 14;
+        this._mat.eyeGlow.color.setHex(0xff3c1e);
+        this._mat.rust.emissive.setRGB(0.85 * (1 - tAtk * 0.45), 0.24 * (1 - tAtk * 0.5), 0.06);
+
         if (this._stateTimer >= this._attackDuration) {
           this.aiState = 'recover';
           this._stateTimer = 0;
+          this.telegraphOrb.visible = false;
+          this._mat.rust.emissive.setRGB(0, 0, 0);
         }
         break;
       }
@@ -727,10 +837,10 @@ export class Enemy {
         this._stateTimer += dt;
         targetYaw = Math.atan2(dirToPlayerX, dirToPlayerZ);
         if (this._stateTimer >= this._recoverDuration) {
-          this._attackCooldown = 0.45 + Math.random() * 0.45;
+          this._attackCooldown = 0.42 + Math.random() * 0.42;
           this.aiState = distToPlayer <= this.attackRange * 1.25 ? 'strafe' : 'pursue';
           this._stateTimer = 0;
-          this._strafeDuration = 0.5 + Math.random() * 0.65;
+          this._strafeDuration = 0.45 + Math.random() * 0.6;
         }
         break;
       }
@@ -746,12 +856,12 @@ export class Enemy {
       }
     }
 
-    // Smooth yaw turn
-    const turnRate = this.aiState === 'windup' ? 5.5 : this.aiState === 'attack' ? 1.5 : 8.5;
+    // Smooth yaw turn (tight active tracking during windup)
+    const turnRate = this.aiState === 'windup' ? 12.5 : this.aiState === 'attack' ? 1.8 : 8.5;
     this.facingYaw += angleDiff(this.facingYaw, targetYaw) * (1 - Math.exp(-turnRate * dt));
 
-    // Velocity damping
-    const accel = this.aiState === 'attack' || this.aiState === 'stagger' ? 7.5 : 11.5;
+    // Velocity damping (responsive active thrust/swing lunge)
+    const accel = this.aiState === 'attack' ? 19.0 : this.aiState === 'stagger' ? 7.5 : 11.5;
     this.velocity.x = damp(this.velocity.x, desiredVx, accel, dt);
     this.velocity.z = damp(this.velocity.z, desiredVz, accel, dt);
 
@@ -776,11 +886,12 @@ export class Enemy {
       }
     }
 
-    // Soft enemy-to-player separation (keeps characters from passing completely inside each other)
+    // Soft enemy-to-player separation (tighter during active lunge so strikes stay in pocket)
     if (playerAlive) {
       const dx = this.position.x - player.position.x;
       const dz = this.position.z - player.position.z;
-      const minDist = this.collisionRadius + player.collisionRadius + 0.08;
+      const margin = this.aiState === 'attack' ? -0.02 : 0.08;
+      const minDist = this.collisionRadius + player.collisionRadius + margin;
       const distSq = dx * dx + dz * dz;
       if (distSq < minDist * minDist) {
         const d = Math.sqrt(distSq) || 0.01;
@@ -828,23 +939,39 @@ export class Enemy {
       p.elbowR.rotation.set(-0.3, 0, 0);
       p.shoulderL.rotation.set(-0.5, 0, 0.75 * recoil);
       p.elbowL.rotation.set(-0.4, 0, 0);
+      p.weapon.rotation.z = damp(p.weapon.rotation.z, 0, 14, dt);
       return;
     }
 
     if (this.aiState === 'windup') {
       const t = Math.min(this._stateTimer / this._windupDuration, 1);
       if (this.archetype === 'sentinel') {
-        // Spear pulled low & far back in menacing crouch
-        p.torso.rotation.x = damp(p.torso.rotation.x, 0.24 * t, 14, dt);
-        p.torso.rotation.y = damp(p.torso.rotation.y, -0.55 * t, 14, dt);
-        p.shoulderR.rotation.set(
-          damp(p.shoulderR.rotation.x, 0.65 * t, 14, dt),
-          0,
-          damp(p.shoulderR.rotation.z, -0.35 * t, 14, dt)
-        );
-        p.elbowR.rotation.x = damp(p.elbowR.rotation.x, -1.15 * t, 14, dt);
-        p.weapon.rotation.x = damp(p.weapon.rotation.x, Math.PI * 0.52, 14, dt);
-      } else if (this._attackPattern === 1) {
+        if (this._attackMove === 'sweep') {
+          // Wide horizontal shaft draw-back on right flank
+          p.torso.rotation.set(0.16 * t, -0.92 * t, 0);
+          p.shoulderR.rotation.set(-0.65 * t, -0.65 * t, -1.05 * t);
+          p.elbowR.rotation.x = damp(p.elbowR.rotation.x, -0.45 * t, 14, dt);
+          p.weapon.rotation.set(
+            damp(p.weapon.rotation.x, Math.PI * 0.68, 14, dt),
+            0,
+            damp(p.weapon.rotation.z, -Math.PI * 0.42 * t, 14, dt)
+          );
+        } else {
+          // Spear pulled low & far back in leveled thrust stance
+          p.torso.rotation.set(0.24 * t, -0.42 * t, 0);
+          p.shoulderR.rotation.set(
+            damp(p.shoulderR.rotation.x, 0.72 * t, 14, dt),
+            0,
+            damp(p.shoulderR.rotation.z, -0.18 * t, 14, dt)
+          );
+          p.elbowR.rotation.x = damp(p.elbowR.rotation.x, -1.25 * t, 14, dt);
+          p.weapon.rotation.set(
+            damp(p.weapon.rotation.x, Math.PI * 0.76, 14, dt),
+            0,
+            damp(p.weapon.rotation.z, 0, 14, dt)
+          );
+        }
+      } else if (this._attackMove === 'overhead') {
         // Heavy overhead telegraph
         p.torso.rotation.x = damp(p.torso.rotation.x, -0.22 * t, 14, dt);
         p.torso.rotation.y = damp(p.torso.rotation.y, -0.25 * t, 14, dt);
@@ -854,18 +981,18 @@ export class Enemy {
           damp(p.shoulderR.rotation.z, -0.22 * t, 14, dt)
         );
         p.elbowR.rotation.x = damp(p.elbowR.rotation.x, -0.45 * t, 14, dt);
-        p.weapon.rotation.x = damp(p.weapon.rotation.x, Math.PI * 0.24, 14, dt);
+        p.weapon.rotation.set(damp(p.weapon.rotation.x, Math.PI * 0.24, 14, dt), 0, 0);
       } else {
         // Raised right-flank slash telegraph
-        p.torso.rotation.x = damp(p.torso.rotation.x, 0.1 * t, 14, dt);
-        p.torso.rotation.y = damp(p.torso.rotation.y, -0.68 * t, 14, dt);
+        p.torso.rotation.x = damp(p.torso.rotation.x, 0.14 * t, 14, dt);
+        p.torso.rotation.y = damp(p.torso.rotation.y, -0.78 * t, 14, dt);
         p.shoulderR.rotation.set(
-          damp(p.shoulderR.rotation.x, -1.55 * t, 14, dt),
-          0,
-          damp(p.shoulderR.rotation.z, -0.82 * t, 14, dt)
+          damp(p.shoulderR.rotation.x, -1.25 * t, 14, dt),
+          -0.38 * t,
+          damp(p.shoulderR.rotation.z, -0.95 * t, 14, dt)
         );
-        p.elbowR.rotation.x = damp(p.elbowR.rotation.x, -0.6 * t, 14, dt);
-        p.weapon.rotation.x = damp(p.weapon.rotation.x, Math.PI * 0.3, 14, dt);
+        p.elbowR.rotation.x = damp(p.elbowR.rotation.x, -0.45 * t, 14, dt);
+        p.weapon.rotation.set(damp(p.weapon.rotation.x, Math.PI * 0.56, 14, dt), 0, 0);
       }
       p.shoulderL.rotation.set(-0.5, 0.35, 0.15);
       p.elbowL.rotation.set(-0.9, 0, 0);
@@ -875,23 +1002,44 @@ export class Enemy {
     if (this.aiState === 'attack') {
       const t = Math.min(this._stateTimer / this._attackDuration, 1);
       if (this.archetype === 'sentinel') {
-        // Explosive forward spear thrust!
-        p.torso.rotation.set(0.32, THREE.MathUtils.lerp(-0.5, 0.15, t), 0);
-        p.shoulderR.rotation.set(THREE.MathUtils.lerp(0.6, -1.35, t), 0, -0.05);
-        p.elbowR.rotation.x = THREE.MathUtils.lerp(-1.1, -0.08, t);
-        p.weapon.rotation.x = Math.PI * 0.48;
-      } else if (this._attackPattern === 1) {
-        // Overhead chop smash
-        p.torso.rotation.set(THREE.MathUtils.lerp(-0.2, 0.45, t), 0.15, 0);
-        p.shoulderR.rotation.set(THREE.MathUtils.lerp(-2.2, 0.15, t), 0, -0.05);
-        p.elbowR.rotation.x = -0.22;
-        p.weapon.rotation.x = Math.PI * 0.46;
+        if (this._attackMove === 'sweep') {
+          // Wide 180-degree horizontal spear shaft & blade cleave across front
+          const sweep = 1 - Math.pow(1 - t, 1.85);
+          p.torso.rotation.set(0.22, THREE.MathUtils.lerp(-0.92, 1.15, sweep), 0);
+          p.shoulderR.rotation.set(
+            -0.68,
+            THREE.MathUtils.lerp(-0.65, 1.08, sweep),
+            THREE.MathUtils.lerp(-1.05, 0.42, sweep)
+          );
+          p.elbowR.rotation.x = -0.22;
+          p.weapon.rotation.set(Math.PI * 0.78, 0, -Math.PI * 0.42);
+        } else {
+          // Explosive level-height forward spear thrust (full arm + shaft + spearhead leveled forward!)
+          const snap = Math.min(t * 2.35, 1);
+          const easeSnap = 1 - Math.pow(1 - snap, 2.0);
+          p.torso.rotation.set(0.26, THREE.MathUtils.lerp(-0.42, 0.12, easeSnap), 0);
+          p.shoulderR.rotation.set(THREE.MathUtils.lerp(0.72, -1.25, easeSnap), 0, -0.05);
+          p.elbowR.rotation.x = THREE.MathUtils.lerp(-1.25, -0.08, easeSnap);
+          p.weapon.rotation.set(THREE.MathUtils.lerp(Math.PI * 0.76, Math.PI * 0.85, easeSnap), 0, 0);
+        }
+      } else if (this._attackMove === 'overhead') {
+        // Snappy overhead chop across full torso capsule height
+        const slam = 1 - Math.pow(1 - t, 1.9);
+        p.torso.rotation.set(THREE.MathUtils.lerp(-0.22, 0.44, slam), 0.14, 0);
+        p.shoulderR.rotation.set(THREE.MathUtils.lerp(-2.25, -0.06, slam), 0, -0.05);
+        p.elbowR.rotation.x = -0.2;
+        p.weapon.rotation.set(Math.PI * 0.62, 0, 0);
       } else {
-        // Wide horizontal slash
-        p.torso.rotation.set(0.22, THREE.MathUtils.lerp(-0.65, 0.72, t), 0);
-        p.shoulderR.rotation.set(-0.78, THREE.MathUtils.lerp(-0.35, 0.95, t), THREE.MathUtils.lerp(-0.8, 0.4, t));
-        p.elbowR.rotation.x = -0.25;
-        p.weapon.rotation.x = Math.PI * 0.45;
+        // Crisp chest-level horizontal sword slash
+        const swing = 1 - Math.pow(1 - t, 1.95);
+        p.torso.rotation.set(0.22, THREE.MathUtils.lerp(-0.78, 0.88, swing), 0);
+        p.shoulderR.rotation.set(
+          -0.88,
+          THREE.MathUtils.lerp(-0.38, 1.05, swing),
+          THREE.MathUtils.lerp(-0.95, 0.48, swing)
+        );
+        p.elbowR.rotation.x = -0.24;
+        p.weapon.rotation.set(Math.PI * 0.72, 0, 0);
       }
       return;
     }
@@ -902,6 +1050,7 @@ export class Enemy {
       p.shoulderR.rotation.set(damp(p.shoulderR.rotation.x, -0.25, 8, dt), 0, -0.2);
       p.elbowR.rotation.x = damp(p.elbowR.rotation.x, -0.5, 8, dt);
       p.weapon.rotation.x = damp(p.weapon.rotation.x, Math.PI * 0.42, 8, dt);
+      p.weapon.rotation.z = damp(p.weapon.rotation.z, 0, 10, dt);
       return;
     }
 
@@ -917,9 +1066,11 @@ export class Enemy {
     p.elbowL.rotation.x = damp(p.elbowL.rotation.x, -0.78, 10, dt);
 
     p.shoulderR.rotation.x = damp(p.shoulderR.rotation.x, -0.35 - sSin * 0.28 * moveAmt, 10, dt);
+    p.shoulderR.rotation.y = damp(p.shoulderR.rotation.y, 0, 10, dt);
     p.shoulderR.rotation.z = damp(p.shoulderR.rotation.z, -0.18, 10, dt);
     p.elbowR.rotation.x = damp(p.elbowR.rotation.x, -0.62, 10, dt);
     p.weapon.rotation.x = damp(p.weapon.rotation.x, Math.PI * 0.42, 10, dt);
+    p.weapon.rotation.z = damp(p.weapon.rotation.z, 0, 10, dt);
   }
 
   dispose() {

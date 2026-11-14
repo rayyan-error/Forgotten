@@ -47,9 +47,10 @@ export class ThirdPersonCamera {
     this.breakLockRange = 29.0;
     this._flickCooldown = 0;
 
-    // Screen shake trauma [0..1]
+    // Screen shake trauma [0..1] & block knockback kick
     this._trauma = 0;
     this._shakePhase = 0;
+    this._knockbackOffset = new THREE.Vector3();
 
     this._desiredCamPos = new THREE.Vector3();
     this._targetWorldPos = new THREE.Vector3();
@@ -174,11 +175,19 @@ export class ThirdPersonCamera {
     return outVec.copy(this.lockedTarget.position).add(this.lockedTarget.lockOffset);
   }
 
+  addKnockbackImpulse(dir, strength = 0.22) {
+    if (!dir) return;
+    this._knockbackOffset.x += dir.x * strength;
+    this._knockbackOffset.y += 0.04 * strength;
+    this._knockbackOffset.z += dir.z * strength;
+  }
+
   updateShake(dt) {
     if (this._trauma > 0) {
       this._trauma = Math.max(0, this._trauma - dt * 1.95);
       this._shakePhase += dt * 48;
     }
+    this._knockbackOffset.multiplyScalar(Math.exp(-14 * dt));
   }
 
   update(dt, input, player, world, lockableTargets = []) {
@@ -288,7 +297,8 @@ export class ThirdPersonCamera {
       this.lookAtPos.lerp(freeLook, 1 - Math.exp(-18 * dt));
     }
 
-    // 7. Apply quadratic screen shake trauma offset
+    // 7. Apply quadratic screen shake trauma & directional block knockback offset
+    this.camera.position.add(this._knockbackOffset);
     if (this._trauma > 0.001) {
       const shake = this._trauma * this._trauma * 0.24;
       const sx = Math.sin(this._shakePhase * 1.1) * shake;

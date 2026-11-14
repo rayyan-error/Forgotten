@@ -61,33 +61,40 @@ export class InputManager {
     };
 
     this._boundHandlers.onMouseDown = (e) => {
+      const container = this.canvas.parentElement;
+      const inViewport =
+        e.target === this.canvas || (container && container.contains(e.target));
+      if (!inViewport) return;
+
       // Middle-click toggles Lock-On and cancels browser auto-scroll
       if (e.button === 1) {
         e.preventDefault();
         this.pendingActionPresses.add('lockOnToggle');
       }
 
-      // Request pointer lock on primary click inside the game canvas
-      if (e.target === this.canvas && e.button === 0 && !this.isPointerLocked) {
+      // Request pointer lock on primary Left-Click inside viewport (or Alt+Drag fallback orbit)
+      if (e.button === 0 && !this.isPointerLocked) {
+        if (e.altKey) {
+          this.isDragging = true;
+          this.lastPointerX = e.clientX;
+          this.lastPointerY = e.clientY;
+          this.mouseButtonsDown.add(e.button);
+          return;
+        }
         this._requestPointerLock();
       }
 
-      // Fallback drag-orbit when pointer lock is inactive (RMB drag)
-      if (e.button === 2 && !this.isPointerLocked && e.target === this.canvas) {
-        this.isDragging = true;
-        this.lastPointerX = e.clientX;
-        this.lastPointerY = e.clientY;
-      }
-
       if (!this.mouseButtonsDown.has(e.button)) {
-        if (e.button === 0 && e.target === this.canvas) {
+        // Left Mouse Button ONLY triggers attacks (Heavy with Shift, else Light)
+        if (e.button === 0) {
           if (this.isSprinting()) {
             this.pendingActionPresses.add('heavyAttack');
           } else {
             this.pendingActionPresses.add('lightAttack');
           }
-        }
-        if (e.button === 2 && e.target === this.canvas) {
+        } else if (e.button === 2) {
+          // Right Mouse Button ONLY triggers Shield Block (never attacks or drags camera)
+          e.preventDefault();
           this.pendingActionPresses.add('blockStart');
         }
       }
@@ -96,12 +103,22 @@ export class InputManager {
 
     this._boundHandlers.onMouseUp = (e) => {
       this.mouseButtonsDown.delete(e.button);
-      if (!this.mouseButtonsDown.has(2)) {
+      if (e.button === 0 || e.button === 2) {
         this.isDragging = false;
       }
     };
 
     this._boundHandlers.onMouseMove = (e) => {
+      // Defensive sync so held RMB Shield Block never gets stuck if mouseup happened off-window
+      if (typeof e.buttons === 'number') {
+        if ((e.buttons & 2) === 0 && this.mouseButtonsDown.has(2)) {
+          this.mouseButtonsDown.delete(2);
+        }
+        if ((e.buttons & 1) === 0 && this.mouseButtonsDown.has(0)) {
+          this.mouseButtonsDown.delete(0);
+        }
+      }
+
       if (this.isPointerLocked) {
         const dx = Math.abs(e.movementX) < 180 ? e.movementX : 0;
         const dy = Math.abs(e.movementY) < 180 ? e.movementY : 0;
@@ -131,7 +148,8 @@ export class InputManager {
     };
 
     this._boundHandlers.onContextMenu = (e) => {
-      if (e.target === this.canvas) {
+      const container = this.canvas.parentElement;
+      if (e.target === this.canvas || (container && container.contains(e.target))) {
         e.preventDefault();
       }
     };
@@ -148,7 +166,7 @@ export class InputManager {
     window.addEventListener('mouseup', this._boundHandlers.onMouseUp);
     window.addEventListener('mousemove', this._boundHandlers.onMouseMove);
     this.canvas.addEventListener('wheel', this._boundHandlers.onWheel, { passive: false });
-    this.canvas.addEventListener('contextmenu', this._boundHandlers.onContextMenu);
+    window.addEventListener('contextmenu', this._boundHandlers.onContextMenu);
     document.addEventListener('pointerlockchange', this._boundHandlers.onPointerLockChange);
     window.addEventListener('blur', this._boundHandlers.onBlur);
   }
@@ -234,7 +252,7 @@ export class InputManager {
     window.removeEventListener('mouseup', this._boundHandlers.onMouseUp);
     window.removeEventListener('mousemove', this._boundHandlers.onMouseMove);
     this.canvas.removeEventListener('wheel', this._boundHandlers.onWheel);
-    this.canvas.removeEventListener('contextmenu', this._boundHandlers.onContextMenu);
+    window.removeEventListener('contextmenu', this._boundHandlers.onContextMenu);
     document.removeEventListener('pointerlockchange', this._boundHandlers.onPointerLockChange);
     window.removeEventListener('blur', this._boundHandlers.onBlur);
   }
