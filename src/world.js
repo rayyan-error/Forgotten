@@ -47,6 +47,7 @@ export class World {
     };
 
     this._graceRestBoost = 0;
+    this._dummyWobble = { x: 0, z: 0, vx: 0, vz: 0 };
     this._materials = this._createMaterials();
 
     this._setupAtmosphereAndLighting();
@@ -1251,6 +1252,17 @@ export class World {
     this._graceRestBoost = 1.0;
   }
 
+  wobbleDummy(hitDir, intensity = 0.65) {
+    if (!this.dummyPivot) return;
+    // Transform world hit direction into dummy's local rotation axes
+    const sinY = Math.sin(-0.62);
+    const cosY = Math.cos(-0.62);
+    const lx = hitDir.x * cosY - hitDir.z * sinY;
+    const lz = hitDir.x * sinY + hitDir.z * cosY;
+    this._dummyWobble.vx += lz * 7.5 * intensity;
+    this._dummyWobble.vz -= lx * 7.5 * intensity;
+  }
+
   getLockableTargets() {
     return this.lockableTargets;
   }
@@ -1282,6 +1294,19 @@ export class World {
     // Subtle sentinel rune pulse
     if (this.sentinelBand) {
       this.sentinelBand.rotation.z = elapsed * 0.45;
+    }
+
+    // Damped spring wobble on Ashen Training Effigy dummy
+    if (this.dummyPivot) {
+      const w = this._dummyWobble;
+      const stiffness = 85;
+      const damping = 7.5;
+      w.vx += (-stiffness * w.x - damping * w.vx) * dt;
+      w.vz += (-stiffness * w.z - damping * w.vz) * dt;
+      w.x += w.vx * dt;
+      w.z += w.vz * dt;
+      this.dummyPivot.rotation.x = THREE.MathUtils.clamp(w.x, -0.45, 0.45);
+      this.dummyPivot.rotation.z = THREE.MathUtils.clamp(w.z, -0.45, 0.45);
     }
 
     // Update rising golden embers

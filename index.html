@@ -50,13 +50,32 @@
         </div>
       </aside>
 
+      <!-- Bottom-Left Crimson Flask Slot -->
+      <aside id="flask-slot" aria-label="Crimson Flask">
+        <div class="flask-frame" id="flask-frame">
+          <svg class="flask-icon" viewBox="0 0 48 56" aria-hidden="true">
+            <rect x="19" y="4" width="10" height="5" rx="1.5" fill="#b6904c" />
+            <path d="M18 9 L30 9 L28 17 L20 17 Z" fill="#8b6b32" />
+            <path d="M20 17 L10 30 L12 47 L24 52 L36 47 L38 30 L28 17 Z" fill="#2c1216" stroke="#b6904c" stroke-width="2" />
+            <path id="flask-liquid" d="M13 31 L14 45 L24 49 L34 45 L35 31 Z" fill="#cf2932" />
+            <path d="M16 25 L20 20" stroke="rgba(255,220,210,0.45)" stroke-width="2" stroke-linecap="round" />
+          </svg>
+          <span class="flask-count" id="flask-count">3</span>
+          <span class="flask-key">E</span>
+        </div>
+        <span class="flask-name">Crimson Flask</span>
+      </aside>
+
+      <!-- Floating Projected Enemy Health Bars -->
+      <div id="enemy-bars-layer" aria-hidden="true"></div>
+
       <!-- Target Lock-On Reticle -->
       <div id="lock-reticle" class="hidden" aria-hidden="true">
         <span class="reticle-diamond"></span>
         <span class="reticle-core"></span>
       </div>
 
-      <!-- Area Discovery / Grace Banner -->
+      <!-- Area Discovery / Grace / Enemy Felled Banner -->
       <div id="area-banner" class="hidden">
         <div class="banner-rule"></div>
         <h1 id="banner-title">ASHEN OVERLOOK</h1>
@@ -64,9 +83,17 @@
         <div class="banner-rule"></div>
       </div>
 
+      <!-- YOU DIED Full-Screen Souls Overlay -->
+      <div id="death-overlay" class="hidden" role="alert">
+        <div class="death-band">
+          <h2 class="death-title">YOU DIED</h2>
+          <p class="death-sub" id="death-sub">Returning to the Site of Grace…</p>
+        </div>
+      </div>
+
       <!-- Context Interaction Prompt -->
       <div id="interact-prompt" class="hidden">
-        <span class="key-badge">E</span>
+        <span class="key-badge">F</span>
         <span id="interact-text">Rest at Site of Grace</span>
       </div>
 
@@ -77,17 +104,21 @@
 
       <!-- Subtle Control Hints -->
       <footer id="control-hints">
-        <div class="hint-item"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>Move</span></div>
+        <div class="hint-item"><kbd>WASD</kbd><span>Move</span></div>
         <div class="hint-sep">·</div>
-        <div class="hint-item"><kbd>Shift</kbd><span>Sprint</span></div>
+        <div class="hint-item"><kbd>LMB</kbd><span>Combo</span></div>
         <div class="hint-sep">·</div>
-        <div class="hint-item"><kbd>Space</kbd><span>Dodge Roll</span></div>
+        <div class="hint-item"><kbd>Shift</kbd>+<kbd>LMB</kbd>/<kbd>R</kbd><span>Heavy</span></div>
         <div class="hint-sep">·</div>
-        <div class="hint-item"><kbd>Mouse</kbd><span>Orbit</span></div>
+        <div class="hint-item"><kbd>RMB</kbd><span>Block</span></div>
         <div class="hint-sep">·</div>
-        <div class="hint-item"><kbd>Scroll</kbd><span>Zoom</span></div>
+        <div class="hint-item"><kbd>Space</kbd><span>Roll</span></div>
         <div class="hint-sep">·</div>
-        <div class="hint-item"><kbd>Q</kbd> / <kbd>MMB</kbd><span>Lock-On</span></div>
+        <div class="hint-item"><kbd>E</kbd><span>Flask</span></div>
+        <div class="hint-sep">·</div>
+        <div class="hint-item"><kbd>F</kbd><span>Grace</span></div>
+        <div class="hint-sep">·</div>
+        <div class="hint-item"><kbd>Q</kbd>/<kbd>MMB</kbd><span>Lock</span></div>
       </footer>
     </div>
   </div>

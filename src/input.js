@@ -2,8 +2,8 @@
  * InputManager
  * ------------
  * Unified keyboard, mouse, wheel, and pointer-lock input handler.
- * Provides held states and single-frame edge triggers (`justPressed`)
- * along with clean extension hooks for Chunk 2 combat actions.
+ * Supports Chunk 1 movement/camera plus Chunk 2 melee combo, heavy attack,
+ * shield block, Crimson Flask heal, Grace rest, and lock-on target cycling.
  */
 export class InputManager {
   /**
@@ -48,7 +48,10 @@ export class InputManager {
 
         if (e.code === 'Space') this.pendingActionPresses.add('dodge');
         if (e.code === 'KeyQ') this.pendingActionPresses.add('lockOnToggle');
-        if (e.code === 'KeyE') this.pendingActionPresses.add('interact');
+        if (e.code === 'Tab') this.pendingActionPresses.add('cycleTarget');
+        if (e.code === 'KeyE') this.pendingActionPresses.add('heal');
+        if (e.code === 'KeyF') this.pendingActionPresses.add('interact');
+        if (e.code === 'KeyR') this.pendingActionPresses.add('heavyAttack');
       }
       this.keysDown.add(e.code);
     };
@@ -69,31 +72,37 @@ export class InputManager {
         this._requestPointerLock();
       }
 
-      if (e.button === 0 || e.button === 2) {
-        if (!this.isPointerLocked && e.target === this.canvas) {
-          this.isDragging = true;
-          this.lastPointerX = e.clientX;
-          this.lastPointerY = e.clientY;
-        }
+      // Fallback drag-orbit when pointer lock is inactive (RMB drag)
+      if (e.button === 2 && !this.isPointerLocked && e.target === this.canvas) {
+        this.isDragging = true;
+        this.lastPointerX = e.clientX;
+        this.lastPointerY = e.clientY;
       }
 
       if (!this.mouseButtonsDown.has(e.button)) {
-        if (e.button === 0) this.pendingActionPresses.add('primaryAttack');
-        if (e.button === 2) this.pendingActionPresses.add('secondaryAction');
+        if (e.button === 0 && e.target === this.canvas) {
+          if (this.isSprinting()) {
+            this.pendingActionPresses.add('heavyAttack');
+          } else {
+            this.pendingActionPresses.add('lightAttack');
+          }
+        }
+        if (e.button === 2 && e.target === this.canvas) {
+          this.pendingActionPresses.add('blockStart');
+        }
       }
       this.mouseButtonsDown.add(e.button);
     };
 
     this._boundHandlers.onMouseUp = (e) => {
       this.mouseButtonsDown.delete(e.button);
-      if (!this.mouseButtonsDown.has(0) && !this.mouseButtonsDown.has(2)) {
+      if (!this.mouseButtonsDown.has(2)) {
         this.isDragging = false;
       }
     };
 
     this._boundHandlers.onMouseMove = (e) => {
       if (this.isPointerLocked) {
-        // Guard against occasional browser pointer-lock warp spikes
         const dx = Math.abs(e.movementX) < 180 ? e.movementX : 0;
         const dy = Math.abs(e.movementY) < 180 ? e.movementY : 0;
         this.pendingMouseDeltaX += dx;
@@ -157,9 +166,6 @@ export class InputManager {
     }
   }
 
-  /**
-   * Snapshot accumulated asynchronous input deltas at the start of a frame.
-   */
   beginFrame() {
     this.keysJustPressed.clear();
     for (const code of this.pendingKeyPresses) {
@@ -198,10 +204,10 @@ export class InputManager {
     return this.actionsJustPressed.has(action);
   }
 
-  /**
-   * Returns normalized horizontal movement intent { x, z, magnitude }.
-   * x: +right / -left, z: +forward / -backward in input space.
-   */
+  isBlocking() {
+    return this.mouseButtonsDown.has(2);
+  }
+
   getMoveVector() {
     let x = 0;
     let z = 0;
