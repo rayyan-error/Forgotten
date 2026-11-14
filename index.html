@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FORGOTTEN — Ashen Overlook</title>
+  <link
+    rel="icon"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23120e1f'/%3E%3Ccircle cx='32' cy='32' r='18' fill='%23ffb84d'/%3E%3Ccircle cx='32' cy='32' r='13' fill='%230b0912'/%3E%3C/svg%3E"
+  />
+  <link rel="stylesheet" href="./styles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="game-container">
+    <canvas id="game-canvas" tabindex="0" aria-label="3D Action RPG Viewport"></canvas>
+
+    <!-- Minimalist Souls-Style HUD -->
+    <div id="hud-overlay" aria-live="polite">
+      <!-- Top-Left Resource Bars -->
+      <aside id="status-bars" aria-label="Character Vitals">
+        <div class="stat-row">
+          <span class="stat-label">HP</span>
+          <div class="bar-frame bar-hp">
+            <div class="bar-trail" id="hp-trail"></div>
+            <div class="bar-fill" id="hp-fill"></div>
+          </div>
+        </div>
+
+        <div class="stat-row">
+          <span class="stat-label">FP</span>
+          <div class="bar-frame bar-fp">
+            <div class="bar-trail" id="fp-trail"></div>
+            <div class="bar-fill" id="fp-fill"></div>
+          </div>
+        </div>
+
+        <div class="stat-row">
+          <span class="stat-label">ST</span>
+          <div class="bar-frame bar-stamina" id="stamina-frame">
+            <div class="bar-trail" id="stamina-trail"></div>
+            <div class="bar-fill" id="stamina-fill"></div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Target Lock-On Reticle -->
+      <div id="lock-reticle" class="hidden" aria-hidden="true">
+        <span class="reticle-diamond"></span>
+        <span class="reticle-core"></span>
+      </div>
+
+      <!-- Area Discovery / Grace Banner -->
+      <div id="area-banner" class="hidden">
+        <div class="banner-rule"></div>
+        <h1 id="banner-title">ASHEN OVERLOOK</h1>
+        <p id="banner-subtitle">The Eclipsed Courtyard</p>
+        <div class="banner-rule"></div>
+      </div>
+
+      <!-- Context Interaction Prompt -->
+      <div id="interact-prompt" class="hidden">
+        <span class="key-badge">E</span>
+        <span id="interact-text">Rest at Site of Grace</span>
+      </div>
+
+      <!-- Pointer Lock Subtle Prompt -->
+      <div id="pointer-prompt">
+        <span>Click viewport to lock camera</span>
+      </div>
+
+      <!-- Subtle Control Hints -->
+      <footer id="control-hints">
+        <div class="hint-item"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>Move</span></div>
+        <div class="hint-sep">·</div>
+        <div class="hint-item"><kbd>Shift</kbd><span>Sprint</span></div>
+        <div class="hint-sep">·</div>
+        <div class="hint-item"><kbd>Space</kbd><span>Dodge Roll</span></div>
+        <div class="hint-sep">·</div>
+        <div class="hint-item"><kbd>Mouse</kbd><span>Orbit</span></div>
+        <div class="hint-sep">·</div>
+        <div class="hint-item"><kbd>Scroll</kbd><span>Zoom</span></div>
+        <div class="hint-sep">·</div>
+        <div class="hint-item"><kbd>Q</kbd> / <kbd>MMB</kbd><span>Lock-On</span></div>
+      </footer>
+    </div>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
